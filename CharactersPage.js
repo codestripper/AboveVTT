@@ -346,6 +346,19 @@ const buffsDebuffs = {
       "type": "class",
       "class": "warlock"
   },
+  "Crimson Rite": {
+      "tohit": "0",
+      "dmg": "0",
+      "save": "0",
+      "check": '0',
+      "replace": /(\d+d\d+)/gi,
+      "replaceType": {
+        "damage": '.ddbc-combat-attack--item:has(.ddbc-combat-attack__meta-item:contains("Weapon"))' 
+      },
+      "newRoll": '$1+1d6',
+      "type": "class",
+      "class": "bloodHunter"
+  },
   "Symbiotic Entity": {
       "tohit": "0",
       "dmg": "+d6",
@@ -1303,6 +1316,7 @@ function rebuild_buffs(fullBuild = false){
       <ul id='sorcererBuffs'><li>Sorcerer</li></ul>
       <ul id='warlockBuffs'><li>Warlock</li></ul>
       <ul id='wizardBuffs'><li>Wizard</li></ul>
+      <ul id='bloodHunterBuffs'><li>Blood Hunter</li></ul>
     </ul>
     <ul id='speciesBuffs'><li>Species</li>
       <ul id='halflingBuffs'><li>Halfling</li></ul>
