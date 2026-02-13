@@ -347,17 +347,32 @@ const buffsDebuffs = {
       "class": "warlock"
   },
   "Crimson Rite": {
-      "tohit": "0",
-      "dmg": "0",
-      "save": "0",
-      "check": '0',
-      "replace": /(\d+d\d+)/gi,
-      "replaceType": {
-        "damage": '.ddbc-combat-attack--item:has(.ddbc-combat-attack__meta-item:contains("Weapon"))' 
-      },
-      "newRoll": '$1+1d6',
-      "type": "class",
-      "class": "bloodHunter"
+    "multiOptions": {
+	  "Base": {
+        "tohit": "0",
+        "dmg": "0",
+        "save": "0",
+        "check": "0",
+        "replace": /(\d+d\d+)/gi,
+        "replaceType": {
+          "damage": '.ddbc-combat-attack--item:has(.ddbc-combat-attack__meta-item:contains("Weapon"))' 
+        },
+        "newRoll": '$1+1d6'
+	  },
+	  "Marked": {
+        "tohit": "0",
+        "dmg": "0",
+        "save": "0",
+        "check": "0",
+        "replace": /(\d+d\d+)/gi,
+        "replaceType": {
+          "damage": '.ddbc-combat-attack--item:has(.ddbc-combat-attack__meta-item:contains("Weapon"))' 
+        },
+        "newRoll": '$1+2d6',
+	  },
+	},
+    "type": "class",
+    "class": "bloodHunter"
   },
   "Symbiotic Entity": {
       "tohit": "0",
