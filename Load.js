@@ -29,13 +29,15 @@ if (isPlainCharacterPage) {
 	window.scripts = [
 		// External Dependencies
 		{ src: "jquery-3.6.0.min.js" },
-		{ src: "jquery.contextMenu.js" },		
+		{ src: "jquery.contextMenu.js" },	
+		{ src: "purify.min.js" },	
 		// AboveVTT Files
 		{ src: "CoreFunctions.js" }, // Make sure CoreFunctions executes first
 		{ src: "DDBApi.js" },
 		{ src: "MonsterDice.js" },
 		{ src: "DiceRoller.js" },
 		{ src: "DiceContextMenu/DiceContextMenu.js" },
+		{ src: "ajaxQueue/ajaxQueueIndex.js", type: "module" },
 		{ src: "MessageBroker.js" },
 		{ src: "rpg-dice-roller.bundle.min.js" },
 		// AboveVTT files that execute when loaded

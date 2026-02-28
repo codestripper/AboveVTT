@@ -776,7 +776,7 @@ function open_grid_wizard_controls(scene_id, aligner1, aligner2, regrid=function
 			}else{
 				$("#scene_selector_toggle").show();
 				$("#tokens").show();
-				window.WIZARDING = false;
+				
 				window.CURRENT_SCENE_DATA = {
 					...window.CURRENT_SCENE_DATA,
 					upsq: $('input[name="upsq"]').val(),
@@ -802,7 +802,7 @@ function open_grid_wizard_controls(scene_id, aligner1, aligner2, regrid=function
 
 		$("#scene_selector_toggle").show();
 		$("#tokens").show();
-		window.WIZARDING = false;
+		
 		window.CURRENT_SCENE_DATA = {
 			...window.CURRENT_SCENE_DATA,
 			fpsq: "5",
@@ -816,7 +816,7 @@ function open_grid_wizard_controls(scene_id, aligner1, aligner2, regrid=function
 
 	let grid_10 = function() {
 
-			window.WIZARDING = false;
+			
 			let subdivided = $('input[name="grid_subdivided"]').val() == 1;
 			$("#scene_selector_toggle").show();
 			$("#tokens").show();
@@ -835,7 +835,7 @@ function open_grid_wizard_controls(scene_id, aligner1, aligner2, regrid=function
 	}
 
 	let grid_15 = function() {
-		window.WIZARDING = false;
+		
 		let subdivided = $('input[name="grid_subdivided"]').val() == 1;
 		$("#scene_selector_toggle").show();
 		$("#tokens").show();
@@ -855,7 +855,7 @@ function open_grid_wizard_controls(scene_id, aligner1, aligner2, regrid=function
 
 
 	let grid_20 = function() {
-		window.WIZARDING = false;
+		
 		let subdivided = $('input[name="grid_subdivided"]').val() == 1;
 		$("#scene_selector_toggle").show();
 		$("#tokens").show();
@@ -876,7 +876,7 @@ function open_grid_wizard_controls(scene_id, aligner1, aligner2, regrid=function
 	cancel.click(function() {
 		$('[id="aligner1"]').remove();
 		$('[id="aligner2"]').remove();
-		window.WIZARDING = false;
+		
 		window.ScenesHandler.scenes[window.ScenesHandler.current_scene_id] = copiedSceneData;
 		window.ScenesHandler.scene = copiedSceneData;
 		window.CURRENT_SCENE_DATA = copiedSceneData;
@@ -1647,7 +1647,7 @@ function edit_scene_dialog(scene_id) {
 	wizard.click(
 		async function() {
 		
-
+			window.LOADING = true;
 			const formData = await get_edit_form_data();
 			for (key in formData) {
 				scene[key] = formData[key];
@@ -1698,7 +1698,7 @@ function edit_scene_dialog(scene_id) {
 	cancel.click(function() {
 		// redraw or clear grid based on scene data
 		// discarding any changes that have been made to live modification of grid
-		if (scene.id === window.CURRENT_SCENE_DATA.id){
+		if (scene.id === window.CURRENT_SCENE_DATA.id && !window.LOADING){
 			const msg = {
 				data: {...scene}
 			}
@@ -2055,7 +2055,20 @@ function init_scenes_panel() {
 
 	scenesPanel.updateHeader("Scenes");
 	add_expand_collapse_buttons_to_header(scenesPanel);
-
+	let hideMapFromPlayers = $(`<button class="token-row-button hide-button ${window.AVTT_CAMPAIGN_INFO?.hidePlayersScene == 1 ? 'active' : ''}" title="Hide Scene from Players"><span class="material-icons"><span class="material-symbols-outlined">group_off</span></span></button>`);
+	hideMapFromPlayers.on("click", function (clickEvent) {
+		const data = { ...window.AVTT_CAMPAIGN_INFO };
+		const button = $(clickEvent.currentTarget);
+		button.toggleClass("active");
+		if (button.hasClass("active")) {
+			data.hidePlayersScene = 1
+		} else {
+			delete data.hidePlayersScene;
+		}
+		AboveApi.setCampaignData(data);
+		window.MB.sendMessage("custom/myVTT/campaignData", data);
+	});
+	scenesPanel.header.find('.expand-collapse-wrapper').prepend(hideMapFromPlayers);
 	let searchInput = $(`<input name="scene-search" type="search" style="width:96%;margin:2%" placeholder="search scenes">`);
 	searchInput.off("input").on("input", mydebounce(() => {
 		let textValue = scenesPanel.header.find("input[name='scene-search']").val();
@@ -2105,10 +2118,7 @@ function init_scenes_panel() {
 
 	let headerWrapper = $(`<div class="scenes-panel-add-buttons-wrapper"></div>`);
 	headerWrapper.append(`<span class='reorder-explanation'>Drag items to move them between folders</span>`);
-	headerWrapper.append(searchInput);
-	headerWrapper.append(addFolderButton);
-	headerWrapper.append(addSceneButton);
-	headerWrapper.append(reorderButton);
+	headerWrapper.append(searchInput, addFolderButton, addSceneButton, reorderButton);
 	scenesPanel.header.append(headerWrapper);
 	headerWrapper.find(".reorder-explanation").hide();
 
@@ -2520,8 +2530,6 @@ function avttScenesSafeDecode(value) {
 		return value;
 	}
 }
-
-
 
 function avttScenesNormalizeRelativePath(path) {
 	if (typeof path !== "string") {

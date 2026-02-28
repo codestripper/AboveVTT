@@ -442,10 +442,9 @@ function map_load_error_cb(e) {
 			}
 		}
 	}
-	window.LOADING = false
+	delete window.LOADING;
 	remove_loading_overlay();
 	$('.import-loading-indicator').remove();
-	delete window.LOADING;
 	window.MB.loadNextScene();
 	console.groupEnd();
 }
@@ -745,25 +744,15 @@ function change_sidbar_tab(clickedTab, isCharacterSheetInfo = false) {
 		// This only happens when `is_character_page() == true` and the user clicked the gamelog tab.
 		// This is an important distinction, because we switch to the gamelog tab when the user clicks info on their character sheet that causes details to be displayed instead of the gamelog.
 		// Since the user clicked the tab, we need to show the gamelog instead of any detail info that was previously shown.
-    let gameLogButton = $("div.ct-character-header__group--game-log.ct-character-header__group--game-log-last, [data-original-title='Game Log'] button, button[class*='-gamelog-button']")
-    if(gameLogButton.length == 0){
-      gameLogButton = $(`[d='M243.9 7.7c-12.4-7-27.6-6.9-39.9 .3L19.8 115.6C7.5 122.8 0 135.9 0 150.1V366.6c0 14.5 7.8 27.8 20.5 34.9l184 103c12.1 6.8 26.9 6.8 39.1 0l184-103c12.6-7.1 20.5-20.4 20.5-34.9V146.8c0-14.4-7.7-27.7-20.3-34.8L243.9 7.7zM71.8 140.8L224.2 51.7l152 86.2L223.8 228.2l-152-87.4zM48 182.4l152 87.4V447.1L48 361.9V182.4zM248 447.1V269.7l152-90.1V361.9L248 447.1z']`).closest('[role="button"]'); // this is a fall back to look for the gamelog svg icon and look for it's button.
-    }
-    gameLogButton.click()
+		let gameLogButton = $("div.ct-character-header__group--game-log.ct-character-header__group--game-log-last, [data-original-title='Game Log'] button, button[class*='-gamelog-button'], div[class*='campaignButtonGroup'][class*='GameLogButton']")
+		if(gameLogButton.length == 0){
+		gameLogButton = $(`[d='M243.9 7.7c-12.4-7-27.6-6.9-39.9 .3L19.8 115.6C7.5 122.8 0 135.9 0 150.1V366.6c0 14.5 7.8 27.8 20.5 34.9l184 103c12.1 6.8 26.9 6.8 39.1 0l184-103c12.6-7.1 20.5-20.4 20.5-34.9V146.8c0-14.4-7.7-27.7-20.3-34.8L243.9 7.7zM71.8 140.8L224.2 51.7l152 86.2L223.8 228.2l-152-87.4zM48 182.4l152 87.4V447.1L48 361.9V182.4zM248 447.1V269.7l152-90.1V361.9L248 447.1z']`).closest('[role="button"]'); // this is a fall back to look for the gamelog svg icon and look for it's button.
+		}
+		gameLogButton.click()
 	}
 }
 
-/**
- * Posts a message to the chat when a player connected to the server.
- */
-function report_connection() {
-	let msgdata = {
-			player: window.PLAYER_NAME,
-			img: window.PLAYER_IMG,
-			text: PLAYER_NAME + " has connected to the server!",
-	};
-	window.MB.inject_chat(msgdata);
-}
+
 
 function use_iframes_for_monsters() { // this is just in case we find a bug and need to give users an easy way to fall back to iframes
 	close_sidebar_modal();
@@ -1167,7 +1156,7 @@ async function init_controls() {
 	$(".sidebar").css("height", "calc(100vh - 24px)");
 
 	$(".ct-sidebar__inner button[aria-label='Unlocked']").click(); // Click on the padlock icon  // This is safe to call multiple times
-	let gameLogButton = $("div.ct-character-header__group--game-log.ct-character-header__group--game-log-last, [data-original-title='Game Log'] button, button[class*='-gamelog-button']")
+	let gameLogButton = $("div.ct-character-header__group--game-log.ct-character-header__group--game-log-last, [data-original-title='Game Log'] button, button[class*='-gamelog-button'], div[class*='campaignButtonGroup'][class*='GameLogButton']")
  	if(gameLogButton.length == 0){
    	gameLogButton = $(`[d='M243.9 7.7c-12.4-7-27.6-6.9-39.9 .3L19.8 115.6C7.5 122.8 0 135.9 0 150.1V366.6c0 14.5 7.8 27.8 20.5 34.9l184 103c12.1 6.8 26.9 6.8 39.1 0l184-103c12.6-7.1 20.5-20.4 20.5-34.9V146.8c0-14.4-7.7-27.7-20.3-34.8L243.9 7.7zM71.8 140.8L224.2 51.7l152 86.2L223.8 228.2l-152-87.4zM48 182.4l152 87.4V447.1L48 361.9V182.4zM248 447.1V269.7l152-90.1V361.9L248 447.1z']`).closest('[role="button"]'); // this is a fall back to look for the gamelog svg icon and look for it's button.
  	}
@@ -1423,7 +1412,7 @@ function init_splash() {
 	ul.append("<li><a style='font-weight:bold;text-decoration: underline;' target='_blank' href='https://www.patreon.com/AboveVTT'>Patreon</a></li>");
 	cont.append(ul);*/
 	cont.append("");
-	cont.append("<div style='padding-top:10px'>Contributors: <b>SnailDice (Nadav),Stumpy, Palad1N, KuzKuz, Coryphon, Johnno, Hypergig, JoshBrodieNZ, Kudolpf, Koals, Mikedave, Jupi Taru, Limping Ninja, Turtle_stew, Etus12, Cyelis1224, Ellasar, DotterTrotter, Mosrael, Bain, Faardvark, Azmoria, Natemoonlife, Pensan, H2, CollinHerber, Josh-Archer, TachyonicSpace, TheRyanMC, j3f (jeffsenn), MonstraG, Wyrmwood, Drenam1, Lauriel</b></div>");
+	cont.append("<div style='padding-top:10px'>Contributors: <b>SnailDice (Nadav),Stumpy, Palad1N, KuzKuz, Coryphon, Johnno, Hypergig, JoshBrodieNZ, Kudolpf, Koals, Mikedave, Jupi Taru, Limping Ninja, Turtle_stew, Etus12, Cyelis1224, Ellasar, DotterTrotter, Mosrael, Bain, Faardvark, Azmoria, Natemoonlife, Pensan, H2, CollinHerber, Josh-Archer, TachyonicSpace, TheRyanMC, j3f (jeffsenn), MonstraG, Wyrmwood, Drenam1, Lauriel, Disil, WhoctorDo, HeroDragon33, Grimshok, SirWaltonOfSmeg</b></div>");
 
 	cont.append("<br>AboveVTT is an hobby opensource project. It's completely free (like in Free Speech). The resources needed to pay for the infrastructure are kindly donated by the supporters through <a style='font-weight:bold;text-decoration: underline;' target='_blank' href='https://www.patreon.com/AboveVTT'>Patreon</a> , what's left is used to buy wine for cyruzzo");
 
@@ -1922,21 +1911,7 @@ function whenAvailable(name, callback) {
 	}, interval);
 }
 
-/**
- * Notifie about player joining the game.
- */
-function notify_player_join() {
-	if(window.DM)
-		return;
-	const playerdata = {
-		abovevtt_version: window.AVTT_VERSION,
-		player_id: window.PLAYER_ID,
-		pc: read_pc_object_from_character_sheet(window.PLAYER_ID)
-	};
 
-	console.log("Sending playerjoin msg, abovevtt version: " + playerdata.abovevtt_version + ", sheet ID:" + window.PLAYER_ID);
-	whenAvailable('JOURNAL', function(){window.MB.sendMessage("custom/myVTT/playerjoin", playerdata)});
-}
 
 /**
  * Check if all players have the same AboveVTT version.
@@ -1991,7 +1966,7 @@ function init_character_page_sidebar() {
 		}, 1000);
 		return;
 	}
-	let gameLogButton = $("div.ct-character-header__group--game-log.ct-character-header__group--game-log-last, [data-original-title='Game Log'] button, button[class*='-gamelog-button']")
+	let gameLogButton = $("div.ct-character-header__group--game-log.ct-character-header__group--game-log-last, [data-original-title='Game Log'] button, button[class*='-gamelog-button'], div[class*='campaignButtonGroup'][class*='GameLogButton']")
 	if(gameLogButton.length == 0){
 	  gameLogButton = $(`[d='M243.9 7.7c-12.4-7-27.6-6.9-39.9 .3L19.8 115.6C7.5 122.8 0 135.9 0 150.1V366.6c0 14.5 7.8 27.8 20.5 34.9l184 103c12.1 6.8 26.9 6.8 39.1 0l184-103c12.6-7.1 20.5-20.4 20.5-34.9V146.8c0-14.4-7.7-27.7-20.3-34.8L243.9 7.7zM71.8 140.8L224.2 51.7l152 86.2L223.8 228.2l-152-87.4zM48 182.4l152 87.4V447.1L48 361.9V182.4zM248 447.1V269.7l152-90.1V361.9L248 447.1z']`).closest('[role="button"]'); // this is a fall back to look for the gamelog svg icon and look for it's button.
 	}
@@ -1999,7 +1974,7 @@ function init_character_page_sidebar() {
 
 	if(window.showPanel == undefined || window.showPanel == true)
 		gameLogButton.click()
-	$(".ct-sidebar__control--unlock").click();
+	$(".ct-sidebar__control--unlock, [class*='styles_controls'] [aria-label='Unlocked']").click();
 
 	$("#site-main").css({"display": "block", "visibility": "hidden"});
 	$(".dice-rolling-panel").css({"visibility": "visible"});
@@ -2009,7 +1984,7 @@ function init_character_page_sidebar() {
 	});
 
 	$("div.sidebar").parent().css({"display": "block", "visibility": "visible"});
-	$(".ct-sidebar__control--unlock").click();
+	$(".ct-sidebar__control--unlock, [class*='styles_controls'] [aria-label='Unlocked']").click();
 	$("div.sidebar").parent().css({"display": "block", "visibility": "visible"});
 	$(".ct-sidebar__pane-top").hide();
 	$(".ct-sidebar__pane-bottom").hide();
@@ -2078,7 +2053,7 @@ function init_character_page_sidebar() {
  * Any time they do that, we need to react to those changes.
  */
 function monitor_character_sidebar_changes() {
-	let gameLogButton = $("div.ct-character-header__group--game-log.ct-character-header__group--game-log-last, [data-original-title='Game Log'] button, button[class*='-gamelog-button']")
+	let gameLogButton = $("div.ct-character-header__group--game-log.ct-character-header__group--game-log-last, [data-original-title='Game Log'] button, button[class*='-gamelog-button'], div[class*='campaignButtonGroup'][class*='GameLogButton']")
 	 if(gameLogButton.length == 0){
 	   gameLogButton = $(`[d='M243.9 7.7c-12.4-7-27.6-6.9-39.9 .3L19.8 115.6C7.5 122.8 0 135.9 0 150.1V366.6c0 14.5 7.8 27.8 20.5 34.9l184 103c12.1 6.8 26.9 6.8 39.1 0l184-103c12.6-7.1 20.5-20.4 20.5-34.9V146.8c0-14.4-7.7-27.7-20.3-34.8L243.9 7.7zM71.8 140.8L224.2 51.7l152 86.2L223.8 228.2l-152-87.4zM48 182.4l152 87.4V447.1L48 361.9V182.4zM248 447.1V269.7l152-90.1V361.9L248 447.1z']`).closest('[role="button"]'); // this is a fall back to look for the gamelog svg icon and look for it's button.
 	 }
@@ -2364,7 +2339,6 @@ function init_ui() {
 
 	init_controls();
 	init_sheet();
-	init_my_dice_details();
 	
 	window.WaypointManager = new WaypointManagerClass();
 
@@ -3079,17 +3053,34 @@ function init_help_menu() {
 							<dd>Ping/highlight location or token to all players. The DM has a quick toggle (right side) for centering player views on scene ping.</dd>
 						</dl>
 						<dl>
-							<dt>- / ${getCtrlKeyName()}+Mouse Wheel Down</dt>
+							<dt>-</dt> <dt>${getCtrlKeyName()}+Mouse Wheel Down</dt>
 							<dd>Zoom out</dd>
 						</dl>
 						<dl>
-							<dt>= / + / ${getCtrlKeyName()}+Mouse Wheel Up</dt>
+							<dt>=</dt> <dt>+</dt> <dt>${getCtrlKeyName()}+Mouse Wheel Up</dt>
 							<dd>Zoom in</dd>
 						</dl>
 						<dl>
-							<dt>[</dt>&nbsp;<dt>]</dt>&nbsp;<dt>${getShiftKeyName()}+[</dt>&nbsp;<dt>${getShiftKeyName()}+]</dt> <dd> Rotate Selected Tokens as a Group</dd>
+							<dt>Arrow Keys</dt> 
+							<dd>Move selected tokens in direction of arrow key</dd>
 						</dl>
-
+						<dl>
+							<dt>Shift+Arrow Keys</dt> 
+							<dd>Rotate selected tokens to face in direction of arrow key</dd>
+						</dl>
+						<dl>
+							<dt>[</dt>&nbsp;<dt>]</dt>&nbsp;<dt>${getShiftKeyName()}+[</dt>&nbsp;<dt>${getShiftKeyName()}+]</dt> 
+							<dd>Rotate selected tokens as a group. Shift rotates in smaller increments</dd>
+						</dl>
+						<dl>
+							<dt>|</dt> <dt>${getShiftKeyName()}+\\</dt><dd>Flip selected tokens images</dd>
+						</dl>
+						<dl>
+							<dt>'</dt><dd>Move selected tokens to top of stack</dd>
+						</dl>
+						<dl>
+							<dt>/</dt><dd>Move selected tokens to bottom of stack</dd>
+						</dl>
 						<dl>
 							<dt>1-9</dt>
 							<dd>Add Custom Numkey Dice to Dice Pool</dd>
@@ -3102,7 +3093,7 @@ function init_help_menu() {
 							<dd>Subtract from Roll Mod</dd>
 						</dl>
 						<dl>
-							<dt>= / + (with Dice Pool or Mod adjuster visibile)</dt>
+							<dt>=</dt> / <dt>+</dt> (with Dice Pool or Mod adjuster visibile)</dt>
 							<dd>Add to Roll Mod</dd>
 						</dl>
 						<dl>
@@ -3331,182 +3322,6 @@ function init_my_dice_details(){
 }
 
 /**
- * Attempts to convert the output of an rpgDiceRoller DiceRoll to the DDB format.
- * If the conversion is successful, it will be sent over the websocket, and this will return true.
- * If the conversion fails for any reason, nothing will be sent, and this will return false,
- * @param {String} expression the dice rolling expression; ex: 1d20+4
- * @param {Boolean} toSelf    whether this is sent to self or everyone
- * @returns {Boolean}         true if we were able to convert and send; else false
- */
-// send_rpg_dice_to_ddb(expression, displayName, imgUrl, modifier, damageType, dmOnly)
-function send_rpg_dice_to_ddb(expression, displayName, imgUrl, rollType="roll", damageType, actionType="custom", sendTo="everyone") {
-
-	let diceRoll = new DiceRoll(expression);
-	diceRoll.action = actionType;
-	diceRoll.rollType = rollType;
-	diceRoll.name = displayName == true ? 'THE DM' : displayName;
-	diceRoll.avatarUrl = imgUrl;
-	// diceRoll.entityId = monster.id;
-	// diceRoll.entityType = monsterData.id;
-
-	if (window.diceRoller.roll(diceRoll)) {
-		console.log("send_rpg_dice_to_ddb rolled via diceRoller");
-		return true;
-	}
-
-	console.group("send_rpg_dice_to_ddb")
-	console.log("with values", expression, displayName, imgUrl, rollType, damageType, actionType, sendTo)
-
-
-	try {
-		expression = expression.replace(/\s+/g, ''); // remove all whitespace
-
-		const supportedDieTypes = ["d4", "d6", "d8", "d10", "d12", "d20", "d100"];
-
-		let roll = new rpgDiceRoller.DiceRoll(expression);
-
-		// rpgDiceRoller doesn't give us the notation of each roll so we're going to do our best to find and match them as we go
-		let choppedExpression = expression;
-		let notationList = [];
-		for (let i = 0; i < roll.rolls.length; i++) {
-			let currentRoll = roll.rolls[i];
-			if (typeof currentRoll === "string") {
-				let idx = choppedExpression.indexOf(currentRoll);
-				let previousNotation = choppedExpression.slice(0, idx);
-				notationList.push(previousNotation);
-				notationList.push(currentRoll);
-				choppedExpression = choppedExpression.slice(idx + currentRoll.length);
-			}
-		}
-		console.log("chopped expression", choppedExpression)
-		notationList.push(choppedExpression); // our last notation will still be here so add it to the list
-
-		if (roll.rolls.length != notationList.length) {
-			console.warn(`Failed to convert expression to DDB roll; expression ${expression}`);
-			console.groupEnd()
-			return false;
-		}
-
-		let convertedDice = [];       // a list of objects in the format that DDB expects
-		let allValues = [];           // all the rolled values
-		let convertedExpression = []; // a list of strings that we'll concat for a string representation of the final math being done
-		let constantsTotal = 0;       // all the constants added together
-		for (let i = 0; i < roll.rolls.length; i++) {
-			let currentRoll = roll.rolls[i];
-			if (typeof currentRoll === "object") {
-				let currentNotation = notationList[i];
-				let currentDieType = supportedDieTypes.find(dt => currentNotation.includes(dt)); // we do it this way instead of splitting the string so we can easily clean up things like d20kh1, etc. It's less clever, but it avoids any parsing errors
-				if (!supportedDieTypes.includes(currentDieType)) {
-					console.warn(`found an unsupported dieType ${currentNotation}`);
-					console.groupEnd()
-					return false;
-				}
-				if (currentNotation.includes("kh") || currentNotation.includes("kl")) {
-					let cleanerString = currentRoll.toString()
-						.replace("[", "(")    // swap square brackets with parenthesis
-						.replace("]", ")")    // swap square brackets with parenthesis
-						.replace("d", "")     // remove all drop notations
-						.replace(/\s+/g, ''); // remove all whitespace
-					convertedExpression.push(cleanerString);
-				} else {
-					convertedExpression.push(currentRoll.value);
-				}
-				let dice = currentRoll.rolls.map(d => {
-					allValues.push(d.value);
-					console.groupEnd()
-					return { dieType: currentDieType, dieValue: d.value };
-				});
-
-				convertedDice.push({
-					"dice": dice,
-					"count": dice.length,
-					"dieType": currentDieType,
-					"operation": 0
-				})
-			} else if (typeof currentRoll === "string") {
-				convertedExpression.push(currentRoll);
-			} else if (typeof currentRoll === "number") {
-				convertedExpression.push(currentRoll);
-				if (i > 0) {
-					if (convertedExpression[i-1] == "-") {
-						constantsTotal -= currentRoll;
-					} else if (convertedExpression[i-1] == "+") {
-						constantsTotal += currentRoll;
-					} else {
-						console.warn(`found an unexpected symbol ${convertedExpression[i-1]}`);
-						console.groupEnd()
-						return false;
-					}
-				} else {
-					constantsTotal += currentRoll;
-				}
-			}
-		}
-		let ddbJson = {
-			id: uuid(),
-			dateTime: `${Date.now()}`,
-			gameId: window.MB.gameid,
-			userId: window.MB.userid,
-			source: "web",
-			persist: true,
-			messageScope: sendTo === "everyone" ?  "gameId" : "userId",
-			messageTarget: sendTo === "everyone" ?  window.MB.gameid : window.MB.userid,
-			entityId: window.MB.userid,
-			entityType: "user",
-			eventType: "dice/roll/fulfilled",
-			data: {
-				action: actionType,
-				setId: window.mydice.data.setId,
-				context: {
-					entityId: window.MB.userid,
-					entityType: "user",
-					messageScope: sendTo === "everyone" ?  "gameId" : "userId",
-					messageTarget: sendTo === "everyone" ?  window.MB.gameid : window.MB.userid,
-					name: displayName,
-					avatarUrl: imgUrl
-				},
-				rollId: uuid(),
-				rolls: [
-					{
-						diceNotation: {
-							set: convertedDice,
-							constant: constantsTotal
-						},
-						diceNotationStr: expression,
-						rollType: rollType,
-						rollKind: expression.includes("kh") ? "advantage" : expression.includes("kl") ? "disadvantage" : "",
-						result: {
-							constant: constantsTotal,
-							values: allValues,
-							total: roll.total,
-							text: convertedExpression.join("")
-						}
-					}
-				]
-			}
-		};
-		if (window.MB.ws.readyState == window.MB.ws.OPEN) {
-			window.MB.ws.send(JSON.stringify(ddbJson));
-			console.groupEnd()
-			return true;
-		} else { // TRY TO RECOVER
-			get_cobalt_token(function(token) {
-				window.MB.loadWS(token, function() {
-					// TODO, CONSIDER ADDING A SYNCMEUP / SCENE PAIR HERE
-					window.MB.ws.send(JSON.stringify(ddbJson));
-				});
-			});
-			console.groupEnd()
-			return true; // we can't guarantee that this actually worked, unfortunately
-		}
-	} catch (error) {
-		console.warn(`failed to send expression as DDB roll; expression = ${expression}`, error);
-		console.groupEnd()
-		return false;
-	}
-}
-
-/**
  * Gathers browser information from User Agent.
  * @returns Object
  */
@@ -3558,9 +3373,7 @@ function is_player_sheet_open() {
  * When not on the character page, `open_player_sheet` is used.
  */
 function show_player_sheet() {
-	$("#character-tools-target").css({
-		"display": "",
-	});
+
 	$(".ct-character-sheet__inner, [class*='styles_mobileNav']>div>button[class*='styles_navToggle']").css({
 		"display": "",
 		"z-index": 21000
@@ -3588,9 +3401,7 @@ function show_player_sheet() {
  * When not on the characters page, `close_player_sheet` is used.
  */
 function hide_player_sheet() {
-	$("#character-tools-target").css({
-		"display": "none",
-	});
+
 	$(".ct-character-sheet__inner, [class*='styles_mobileNav']>div>button[class*='styles_navToggle']").css({
 		"display": "none",
 		"z-index": -1

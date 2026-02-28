@@ -126,7 +126,7 @@ function token_setting_options() {
 				{ value: false, label: "Above darkness", description: "The token will appear above darkness/light" }
 			],
 			defaultValue: false,
-			menuPosition: '12',
+			menuPosition: '13',
 			player: true
 		},
 		{
@@ -168,7 +168,7 @@ function token_setting_options() {
 				{ value: false, label: 'Border', description: "The token has a border around it." }
 			],
 			defaultValue: false,
-			menuPosition: '11',
+			menuPosition: '12',
 			player: true
 		},
 		{
@@ -1591,7 +1591,7 @@ function update_dice_streaming_feature(enabled, sendToText=gamelog_send_to_text(
 						streamid: diceplayer_id
 					});
 				}
-				else if($(this).text() == "Dungeon Master"){
+				else if ($(this).text() == "Dungeon Master" || $(this).text() == "DM"){
 					window.MB.sendMessage("custom/myVTT/showonlytodmdicestream",{
 						streamid: diceplayer_id
 					});
@@ -1609,7 +1609,7 @@ function update_dice_streaming_feature(enabled, sendToText=gamelog_send_to_text(
 
 			joinDiceRoom();
 			setTimeout(function(){
-				if(sendToText == "Dungeon Master"){
+				if (sendToText == "Dungeon Master" || sendToText == "DM"){
 					window.MB.sendMessage("custom/myVTT/showonlytodmdicestream",{
 						streamid: diceplayer_id
 					});
