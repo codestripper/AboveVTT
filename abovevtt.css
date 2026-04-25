@@ -33,6 +33,13 @@ body > button,
     border: 1px solid lightgray;
     font-size: 12px;
 }
+
+/*Common simple positioning*/
+.TLA {
+    position: absolute;
+    top: 0;
+    left: 0;
+}
 .note-text table{
     width: revert-layer;
 }
@@ -219,13 +226,13 @@ body > div {
 .party-item-table td.item-add-cell{
     min-width: 90px;
 }
-.note-text .ct-currency-button__currency-item-preview{
+:is(.note-text, .avtt-stat-block-container) .party-currency .ct-currency-button__currency-item-preview{
     width:16px;
     height:16px;
     position:relative;
     display:inline-block;
 }
-.note-text .party-currency {
+:is(.note-text, .avtt-stat-block-container) .party-currency {
     display: flex;
     align-items: center;
     justify-content: center;
@@ -775,7 +782,7 @@ span.button-text{
     opacity: 1;
     background: #242527;  
     cursor: move;   
-    z-index: 49000;
+    z-index: 100000;
     border-radius: 3px;   
     border: 1px solid gray;
 }
@@ -946,10 +953,54 @@ select#doorTypeSelectUVTT{
     filter: drop-shadow(0px 0px 2px #000) blur(1px); /*fill in fog gaps on player view*/
     opacity: 1;
 }
-#groupRotationGrabber,
-#rotationGrabber {
-    scale: min(4, max(1, calc(0.5 / var(--window-zoom))))
+#dragbox {
+  position: absolute;
+  overflow: visible;
+  top: 0;
+  left: 0;
+  transform-origin: top left;
+  transform: scale(var(--scene-scale));
+  display: block;
+  pointer-events: none;
+  z-index: 1000000;
 }
+#dragbox .drag-box-b {
+  stroke: black;
+  stroke-width: calc(1.5px / var(--scene-scale) / var(--window-zoom));
+  stroke-linecap: square;
+  vector-effect: non-scaling-stroke;
+  overflow: visible !important;
+}
+#dragbox .drag-box-w {
+  fill: rgba(0, 255, 255, 0.1);
+  stroke: white;
+  stroke-width: calc(1.5px / var(--scene-scale) / var(--window-zoom));
+  stroke-dasharray: calc(4px / var(--scene-scale) / var(--window-zoom)) calc(4px / var(--scene-scale) / var(--window-zoom));
+  stroke-linecap: square;
+  vector-effect: non-scaling-stroke;
+  transition: fill 0.2s;
+  overflow: visible !important;
+}
+#dragbox .sel-box {
+  fill: rgba(0, 255, 255, 0.1);
+  stroke: white;
+  stroke-width: calc(1.5px / var(--scene-scale) / var(--window-zoom));
+  stroke-linecap: round;
+  vector-effect: non-scaling-stroke;
+}
+#dragbox .grabber {
+  cursor: alias;
+  pointer-events: auto;
+}
+
+/*adjust grabber scale 1.2 here:*/
+#dragbox .grabber-icon-r {
+  transform: scale(calc(1.2 / var(--scene-scale) / var(--window-zoom))) translate(0px, -25px);
+}
+#dragbox .grabber-icon-c {
+  transform: translate(0px, -10px) scale(calc(1.2 / var(--scene-scale)  / var(--window-zoom))) translate(-12.5px, -25px);
+}
+
 #fog_overlay,
 #draw_overlay_under_fog_darkness,
 #draw_overlay{
@@ -1947,6 +1998,26 @@ div#scene_properties form > div{
     visibility: visible;
     transition: 0.05s ease-in-out 0.4s;
 }
+#wall_menu [data-desc]::after{
+    visibility: hidden;
+    opacity: 0;
+    content: attr(data-desc);
+    pointer-events: none;
+    max-width: 310px;
+    white-space: pre-wrap;
+    position: fixed;
+    display: inline-flex;
+    transform: translate(58px, -25px);
+    background-color: var(--background-color, rgb(249, 249, 249));
+    border-radius: 10px;
+    padding: 10px;
+    transition: 0.0s linear 0.0s;
+}
+#wall_menu [data-desc]:hover::after{
+    opacity: 1;
+    visibility: visible;
+    transition: 0.1s linear 1s;
+}
 .drawbutton.hasTooltip{
     position: relative;
 }
@@ -1997,7 +2068,10 @@ padding-bottom: 5px;
         0px 0px 5px #000;
     pointer-events:none;
 }
-
+.labelToken.notVisible.hasTooltip:after,
+.labelToken.notVisible.hasTooltip:hover:after{
+    visibility: hidden;
+}
 #token_map_items .labelToken.hasTooltip:after, 
 #token_map_items .labelToken.hasTooltip:hover:after {
     font-size: calc(12px / var(--scene-scale));
@@ -2402,7 +2476,7 @@ padding-top:10px;
     background: #F58231;
 }
 
-:is(.token, .folder-item-list) .note-condition.condition-img {
+:is(.token, .folder) .note-condition.condition-img {
     background: #e4c700;
 }
 
@@ -2465,15 +2539,12 @@ padding-top:10px;
 .tokenselected::before {
     content: "";
     position: absolute;
-    top: -7px;
-    left: -7px;
-    right: -7px;
-    bottom: -7px;
-    border-radius: 0px;
-    padding: 5px;
-    border: 5px #c0f3fff5 solid;
-    z-index: 0;
-    border-radius: 5px;
+    top: calc(-1px * var(--scene-scale, 1));
+    left: calc(-1px * var(--scene-scale, 1));
+    right: calc(-1px * var(--scene-scale, 1));
+    bottom: calc(-1px * var(--scene-scale, 1));
+    border: calc(2px * var(--scene-scale, 1)) #c0f3fff5 solid;
+    border-radius: calc(2px * var(--scene-scale, 1));
     pointer-events: none;
 }
 
@@ -3147,6 +3218,24 @@ button.roll-button-mod.adv {
     justify-content: center;
     align-items: center; 
 }
+.moveableWindow .note{
+    width: 100%;
+    height: 100%;
+    position: relative;
+    display: block;
+}
+.moveableWindow .note > .note-text {
+    overflow: auto;
+    height: calc(100% - 68px);
+    width: 100%;
+}
+.body-rpgcharacter-sheet .moveableWindow .note > .note-text {
+    height: calc(100% - 25px);
+}
+ .moveableWindow .note > .note-text *{
+    overscroll-behavior: auto;
+}  
+
 body .note-visibility-toggle-container {
     position:fixed;
     background:#fff;
@@ -3530,7 +3619,7 @@ body .note-visibility-toggle-container {
     mix-blend-mode:lighten;
     opacity:1;
     background:#000;
-    filter: blur(3px);
+    filter: blur(calc(3px * var(--scene-scale-conversion, 1)));
 }
 .ruler-svg-text{
     fill: #000;
@@ -3585,11 +3674,14 @@ body .note-visibility-toggle-container {
     display:none;
 }
 .aura-element-container-clip [id*='vision_'].notVisible,
-.door-button.notVisible{
+.door-button.notVisible,
+[id^='aura_'].notVisible{
     visibility: hidden;
 }
-div#selectedTokensBorder {
-    pointer-events: none;
+.token.notVisible,
+.token.notVisible *{
+    visibility: hidden !important; 
+    pointer-events: none !important;
 }
 
 #conditions-flyout li,
@@ -3754,6 +3846,20 @@ div#selectedTokensBorder {
 }
 .mce-floatpanel{
     z-index: 191000 !important;
+}
+.mce-container-body:has(>#mce-custom-font-size){
+    display:inline-flex;
+    align-items: center;
+    justify-content: center;
+    align-content: center;
+    flex-wrap: wrap;
+    flex-direction: row;
+    border:none;
+    height: 26px;
+}
+.mce-container:has(>.mce-container-body>#mce-custom-font-size){
+    border:none;
+    display:inline-block;
 }
 .icon-condition,
 .context-menu-icon-condition {
@@ -4256,7 +4362,7 @@ div.token-image {
 }
 
 .token:before{
-    transform: rotate(var(--token-rotation));
+    transform: rotate(calc(var(--token-rotation) + var(--token-heading)));
 }
 
 .markers-icon:before,
@@ -5139,7 +5245,9 @@ button.applyDamageButton svg {
     align-items: center;
     direction: rtl;
 }
-
+.block-send-to-game-log:has(.whisper-container.visible){
+    background: revert !important;
+}
 
 td button.block-send-to-game-log {
     position: absolute;
@@ -6190,6 +6298,7 @@ span.exhaustion-pip.last{
     right: 0px;
     bottom: 0px;
     background: rgb(235, 241, 245);
+    z-index: 10;
     /* easy debugging */
     /* opacity: 0.5; */
 }
@@ -6397,8 +6506,6 @@ button.avtt-roll-formula-button {
     width: unset;
 }
 .MuiModal-root,
-div#selectedTokensBorder,
-div#selectedTokensBorderRotationGrabberConnector,
 #sounds-panel .volume-control {
     width: 50%;
     float: right;
@@ -7033,7 +7140,7 @@ div#selectedTokensBorderRotationGrabberConnector,
 
 #tokenOptionsPopup{
     position: fixed;
-    z-index: 59000;
+    z-index: 110000;
     background: #fff;
     border-radius: 10px;
     width: 245px;
@@ -7378,7 +7485,9 @@ div#tokenOptionsContainer .remove-from-ct>button{
     background-image: linear-gradient(to left, transparent calc(100% - var(--hp-percentage)), var(--token-hpbar-aura-color) 0%, var(--token-hpbar-aura-color) 100%) !important;
     box-shadow: inset 0px 0px 0px 1px var(--token-temp-hpbar), 0px 0px 3px 1px var(--token-temp-hpbar);
 }
-
+.VTTToken.freeform.notVisible .hpbar:after{
+    visibility: hidden;
+}
 :is(#combat_area, #combat_area_carousel) td [class*="AvatarPortrait"]{
     border-radius: 5px;
     top:2px;
@@ -7652,7 +7761,7 @@ div#file-listing-section .sidebar-panel-loading-indicator {
 }
 #combat_tracker_inside {
     height: 450px;
-    z-index: 49000;
+    z-index: 100000;
 }
 /*minimize windows*/
 
@@ -8222,7 +8331,10 @@ button span.onedrive-btn-status{
     margin-bottom: 2px !important;
 }
 .sp-cf:after, .sp-cf:before{
-    display:none;
+    display:none !important;
+}
+#sources-import-content-container .sp-container{
+    position: fixed !important;
 }
 .sp-replacer.sp-light{
     float:  right;
@@ -8356,6 +8468,8 @@ button#changeTokenImage:before{
     position: relative;
     top: 0;
     opacity: 1;
+    white-space: pre-wrap;
+    max-width:100%;
 }
 
 #conditions-flyout li{
@@ -8508,6 +8622,10 @@ button#changeTokenImage:before{
     content:'';
     --mask-size:calc(98% - 2px / var(--window-zoom));
 }
+.VTTToken:not(.freeform).notVisible .hpvisualbar:before{
+    visibility: hidden;
+}
+
 .VTTToken[data-notatoken]:not(.freeform) .hpvisualbar:before{
     --mask-size:calc(98% - calc(2px / var(--scene-scale)) / var(--window-zoom));
 }
@@ -8515,7 +8633,7 @@ button#changeTokenImage:before{
 .VTTToken:not(.freeform):not(.hasbase) .hpvisualbar:before{
     --mask-size:calc(100% - 7px);
     border-radius: 50%;
-    transform: scale(var(--token-scale)) rotate(var(--token-rotation)) scaleX(var(--image-flip-x, 1));
+    transform: scale(var(--token-scale)) rotate(calc(var(--token-rotation) + var(--token-heading))) scaleX(var(--image-flip-x, 1));
     height: 100%;
     width: 100%;
     top: 0px;
@@ -8924,17 +9042,9 @@ body.color-blind-avtt {
 .mfp-wrap{
     z-index: 1000000 !important;
 }
-[role='dialog']>.note>.note-text {
-    min-height: 450px;
-    position: relative;
-    height: 100%;
-    top: 0;
-    left: 0;
-    right: 0;
-    bottom: 0;
-}
+
 .ui-front{
-    z-index: 100000 !important;
+    z-index: 100000;
 }
 #combat_area tr.CTToken:before{
     content:  '???';
@@ -9147,7 +9257,7 @@ body:not(.body-rpgcampaign) .site-bar{
     z-index: 20 !important;
 }
 [data-darkness]{
-    transform: rotate(var(--token-rotation));
+    transform: rotate(calc(var(--token-rotation) + var(--token-heading)));
     z-index:16 !important;
     opacity: 1 !important;
 }
@@ -12107,6 +12217,7 @@ div#playlistFields {
     border-style: solid; 
     margin-right: 3px;
     font-size:20px;
+    text-indent: 20px;
 }
 
 #chat-language option {
@@ -14525,7 +14636,16 @@ button#displayedDiceFormulaExit:hover {
 .sidebar-panel-content.avtt-drop-target::after {
     top: 89px;
 }
-
+.grid-svg-tile {
+  position: absolute;
+  transform-origin: top left;
+  top: 0;
+  left: 0;
+  pointer-events: none;
+  width: 100%;
+  height: 100%;  
+  background-repeat: repeat;
+}
 #VTT.hide-players *{
     visibility:hidden !important;
     pointer-events:none !important;
@@ -14699,41 +14819,7 @@ button#displayedDiceFormulaExit:hover {
 }
 
 
-/***Font Faces*****/
-@font-face {
-    font-family: Scala Sans Offc;
-    font-style: normal;
-    font-weight: 700;
-    src: url(https://media.dndbeyond.com/encounter-builder/static/media/ScalaSansOffc-Bold.048d2d142baf798dc56f.ttf) format("truetype")
-}
 
-@font-face {
-    font-family: Scala Sans Offc;
-    font-style: normal;
-    font-weight: 400;
-    src: url(https://media.dndbeyond.com/encounter-builder/static/media/ScalaSansOffc.0eea070d2279b1a6be23.ttf) format("truetype")
-}
-
-@font-face {
-    font-family: Scala Sans Offc;
-    font-style: italic;
-    font-weight: 700;
-    src: url(https://media.dndbeyond.com/encounter-builder/static/media/ScalaSansOffc-BoldIta.740e4d6d85a09a9cd0a0.ttf) format("truetype")
-}
-
-@font-face {
-    font-family: Scala Sans Offc;
-    font-style: italic;
-    font-weight: 400;
-    src: url(https://media.dndbeyond.com/encounter-builder/static/media/ScalaSansOffc-Ita.86c4513e1c4b869189c2.ttf) format("truetype")
-}
-
-@font-face {
-    font-family: MrsEavesSmallCaps;
-    font-style: normal;
-    font-weight: 100;
-    src: url(https://media.dndbeyond.com/encounter-builder/static/media/MrsEavesSmallCaps.1744d7a566b5a2ccca6c.ttf) format("truetype")
-}
 @font-face {
   font-family: "Tiamat Condensed SC Regular";
   src: url("https://www.dndbeyond.com/fonts/tiamatcondensedsc-regular-webfont.woff2") format("woff2");

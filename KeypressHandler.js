@@ -18,9 +18,7 @@ Mousetrap.bind('c', function () {       //combat tracker
 
 
 Mousetrap.bind('d', function () {       //draw menu
-    if (window.DM){
-        $('#draw_button').click()
-    }
+    $('#draw_button').click()
 });
 
 Mousetrap.bind('t', function () {       //draw menu
@@ -68,6 +66,32 @@ Mousetrap.bind('v', function () {       //video toggle
 
     $('#peerVideo_switch').click()
 });
+
+function fKeySaveLocation(e){
+    e.preventDefault();
+    window.savedLocations = {
+        ...window.savedLocations,
+        [e.key]: {
+            zoom: window.ZOOM,
+            scrollX: window.scrollX,
+            scrollY: window.scrollY
+        }
+    }
+    showTempMessage(`Location ${e.key} saved`, { fadeDelay:600, fadeTime:400 });
+}
+function fKeyGoToLocation(e){
+    e.preventDefault();
+    const locData = window.savedLocations?.[e.key];
+    if(!locData) return;
+    change_zoom(locData.zoom);
+    window.scrollTo({left: locData.scrollX, top: locData.scrollY, behavior: 'smooth'});
+}
+Mousetrap.bind(['shift+f1', 'shift+f2', 'shift+f3', 'shift+f4'], function (e) {    
+    fKeySaveLocation(e);
+})
+Mousetrap.bind(['f1', 'f2', 'f3', 'f4'], function (e) {    
+    fKeyGoToLocation(e);
+})
 
 Mousetrap.bind('shift+v', function () {    
     if(window.SelectedTokenVision == true && $('#selected_token_vision .ddbc-tab-options__header-heading--is-active').length==0){
@@ -242,6 +266,10 @@ Mousetrap.bind('shift+s', function (e) {
     }
 });
            
+Mousetrap.bind('shift+g', function () { //toggle high visibility grid
+    const vtt = $("#VTT");
+    grid_overlay_update(window.CURRENT_SCENE_DATA.grid == 1, vtt.css('--grid-overlay-on') !== 'block')
+});
 
 Mousetrap.bind('q', function () {       //collapse/show sidebar. (q is next to tab, also used to show/hide elements)
     $('#hide_rightpanel').click()
@@ -257,8 +285,14 @@ Mousetrap.bind('shift+w', function () {
         $('#show_walls').toggleClass(['button-enabled', 'ddbc-tab-options__header-heading--is-active']);
         redraw_light_walls();
     }
-       
+
 });
+Mousetrap.bind('j', function () {
+    if(window.DM){
+        $('#snap_walls').toggleClass(['button-enabled', 'ddbc-tab-options__header-heading--is-active']);
+    }
+});
+    
 Mousetrap.bind('shift+e', function () {
     if(window.DM){
         $('#show_elev').toggleClass(['button-enabled', 'ddbc-tab-options__header-heading--is-active']);
@@ -282,21 +316,24 @@ Mousetrap.bind('shift+l', function () {
         $('#select_locked').click();
     }
 });
-
+if(is_spectator_page()){
+    Mousetrap.bind('shift+k', function () {
+        sendPointerEvent('#lock_view_button')
+    });
+}
 Mousetrap.bind('esc', function () {     //deselect all buttons
-
+    clear_temp_canvas();
+    close_splash();
     $('#displayedDiceFormula').remove();
     delete window.numpadRollFormulaMod;
     delete window.numpadRollFormula;
 
-    stop_drawing();
-
-    if(!$("#wall_button").hasClass("button-enabled")){
-        $('#select-button').click();
-    }
-    else{
-        redraw_light_walls();
-    }
+    //reselect the current menu to trigger draw stop/reset, allows cancelling polygons or other drawings
+    //ensure menu stays open if it was open, as clicking the button again would close it
+    const enabledMenuHeader = $('.main-top-buttons>.drawbutton.button-enabled');
+    const visibleMenu = $('.top_menu.visible');
+    enabledMenuHeader.click();
+    visibleMenu.toggleClass('visible', true); 
 
     close_token_context_menu();
     $(".draggable-token-creation").addClass("drag-cancelled");
@@ -315,51 +352,42 @@ Mousetrap.bind('esc', function () {     //deselect all buttons
         // only close the sidebar if there isn't something on the screen explicitly trying to keep it open
         close_sidebar_modal();
     }
+    deselect_all_tokens();
     remove_tooltip();
     removeError();
 });
 
-
-const moveLoop = function(callback = function(){}){
-    for (let i = 0; i < window.CURRENTLY_SELECTED_TOKENS.length; i++) {
-        let id = window.CURRENTLY_SELECTED_TOKENS[i];
-        let token = window.TOKEN_OBJECTS[id];
-        callback(token);
-    }
-    return true;
-}
-
 //Throttle so the token doesn't immediately fly off map if button is held and set trailing only we can register diagonal movement as 1 move.
 const throttleMoveRequest = throttle(() => {
-    requestAnimationFrame(moveKeyWatch);
-}, 5, {leading: false, trailing: true})
+    moveKeyWatch();
+}, 25, {leading: false, trailing: true})
 
 
 //setTimeout so we can be sure diagonal key combos are pressed or not.
 function moveKeyWatch() {
     if (arrowKeysHeld[0] && arrowKeysHeld[2]) {
-        moveLoop(function(token){token.moveUpLeft()});
+        forSelTokens(function(token){token.moveUpLeft()});
     } 
     else if (arrowKeysHeld[0] && arrowKeysHeld[3]) {
-       moveLoop(function(token){token.moveUpRight()});
+       forSelTokens(function(token){token.moveUpRight()});
     } 
     else if (arrowKeysHeld[1] && arrowKeysHeld[2]) {
-       moveLoop(function(token){token.moveDownLeft()});
+       forSelTokens(function(token){token.moveDownLeft()});
     } 
     else if (arrowKeysHeld[1] && arrowKeysHeld[3]) {
-       moveLoop(function(token){token.moveDownRight()});
+       forSelTokens(function(token){token.moveDownRight()});
     } 
     else if (arrowKeysHeld[0]) {
-       moveLoop(function(token){token.moveUp()});
+       forSelTokens(function(token){token.moveUp()});
     } 
     else if (arrowKeysHeld[1]) {
-       moveLoop(function(token){token.moveDown()});
+       forSelTokens(function(token){token.moveDown()});
     }
     else if (arrowKeysHeld[2]) {
-      moveLoop(function(token){token.moveLeft()});
+      forSelTokens(function(token){token.moveLeft()});
     }
     else if (arrowKeysHeld[3]) {
-       moveLoop(function(token){token.moveRight()});
+       forSelTokens(function(token){token.moveRight()});
     }  
 }
 
@@ -568,6 +596,9 @@ Mousetrap.bind('mod+a', function (e) {
         redraw_light(true);
         sync_drawings();
         window.wallsBeingDragged = [];
+    } else if($('#select-button').hasClass('button-enabled')){ //select all tokens
+        e.preventDefault();
+        select_all_tokens();
     }
 });
 
@@ -623,30 +654,22 @@ function handle_undo(){
 }
     
 Mousetrap.bind('|', () => { //flip all selected tokens
-    for (let i = 0; i < window.CURRENTLY_SELECTED_TOKENS.length; i++) {
-	let id = window.CURRENTLY_SELECTED_TOKENS[i];
-	let token = window.TOKEN_OBJECTS[id];
+    forSelTokens((token) => {
 	token.flip()
 	token.place_sync_persist();
-    }
+    });
 });
 Mousetrap.bind('/', () => { 
-    for (let i = 0; i < window.CURRENTLY_SELECTED_TOKENS.length; i++) {
-        let id = window.CURRENTLY_SELECTED_TOKENS[i];
-        let token = window.TOKEN_OBJECTS[id];
-        token.moveToBottom();
-    }
+    forSelTokens((token) => token.moveToBottom());
 });
-Mousetrap.bind('\'', () => { 
-    for (let i = 0; i < window.CURRENTLY_SELECTED_TOKENS.length; i++) {
-        let id = window.CURRENTLY_SELECTED_TOKENS[i];
-        let token = window.TOKEN_OBJECTS[id];
-        token.moveToTop();
-    }
+    Mousetrap.bind('\'', () => {
+    forSelTokens((token) => token.moveToTop());        
 });
 let key_rotation_done;
 let key_rotation_angle = 0;
 function key_rotation(angle) {
+    if (window.key_rotation_pause)
+        return; //commit in progress, if we allow rotation during process it may remove the token from the map and cause errors
     if(key_rotation_done) {
         clearTimeout(key_rotation_done);
     } else {
@@ -654,6 +677,7 @@ function key_rotation(angle) {
         grouprotate_create();
     }
     key_rotation_done = setTimeout(() => {
+        window.key_rotation_pause = true;
         key_rotation_done = null;
         grouprotate_commit(key_rotation_angle);
         draw_selected_token_bounding_box();	        

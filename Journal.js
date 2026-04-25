@@ -429,10 +429,47 @@ class JournalManager{
 		
 
 	}
+	show_rename_input(note_id, searchText=''){	
+		const self = this;
+				
+		const input_note_title=$(`
+			<input type='text' class='input-add-chapter' value='${self.notes[note_id].title}'>
+		`);
+		const rename_btn = $(`.sidebar-list-item-row[data-id='${note_id}'] button.save-rename`);
+		const edit_btn = $(`.sidebar-list-item-row[data-id='${note_id}'] button.edit-note`);
+		input_note_title.keypress(function(e){
+			if (e.which == 13 && input_note_title.val() !== "") {
+				self.notes[note_id].title = input_note_title.val();
+				self.sendNotes([self.notes[note_id]]);
+				self.persist();
+				self.build_journal(searchText);
+			}
+
+			// If the user presses escape, cancel the edit
+			if (e.which == 27) {
+				self.build_journal(searchText);
+			}
+
+		});
+		input_note_title.off('click').on('click', function(e){
+			e.stopPropagation();
+		})
+		input_note_title.blur(function(event){	
+			let e = $.Event('keypress');
+			e.which = 13;
+			input_note_title.trigger(e);
+		});
+		edit_btn.css('visibility', 'hidden');
+		rename_btn.show();
+		const entry_title = $(`.sidebar-list-item-row[data-id='${note_id}'] .sidebar-list-item-row-details-title`);
+		entry_title.replaceWith(input_note_title);
+		
+		input_note_title.focus();
+	}
 	build_journal(searchText){
 		console.log('build_journal');
 		let self=this;
-
+		
 		// Clear all elements from journal panel except the searchbar, which needs to stay in place between searches
 		journalPanel.body.children().not('#journal-control-container, #journal-control-container *').remove();
 		
@@ -573,7 +610,6 @@ class JournalManager{
 		journalPanel.body.append(chapter_list);
 		let chaptersWithLaterParents = [];
 
-		console.log('window',window);
 		let relevantNotes = {};
 		let relevantChapters = [];
 
@@ -1091,53 +1127,14 @@ class JournalManager{
 							render_source_chapter_in_iframe(self.notes[note_id].ddbsource);
 						});
 					}
-					let rename_btn = $("<button class='token-row-button'><img src='"+window.EXTENSION_PATH+"assets/icons/rename-icon.svg'></button>");
+					let rename_btn = $("<button style='display:none' class='token-row-button save-rename'><img src='"+window.EXTENSION_PATH+"assets/icons/save.svg'></button>");
 					
-					rename_btn.click(function(){
-						//Convert the note title to an input field and focus it
-						const input_note_title=$(`
-							<input type='text' class='input-add-chapter' value='${self.notes[note_id].title}'>
-						`);
-
-						input_note_title.keypress(function(e){
-							if (e.which == 13 && input_note_title.val() !== "") {
-								self.notes[note_id].title = input_note_title.val();
-								self.sendNotes([self.notes[note_id]]);
-								self.persist();
-								self.build_journal(searchText);
-							}
-
-							// If the user presses escape, cancel the edit
-							if (e.which == 27) {
-								self.build_journal(searchText);
-							}
-						});
-						input_note_title.off('click').on('click', function(e){
-							e.stopPropagation();
-						})
-						input_note_title.blur(function(event){	
-							let e = $.Event('keypress');
-							e.which = 13;
-							input_note_title.trigger(e);
-						});
-
-						entry_title.empty();
-						
-						entry_title.append(input_note_title);
-						entry_title.append(edit_btn);
-
-						input_note_title.focus();
-
-						// Convert the edit button to a save button
-						rename_btn.empty();
-						rename_btn.append(`
-							<img src='${window.EXTENSION_PATH}assets/icons/save.svg'>
-						`);
-					});
 
 
 
-					let edit_btn=$("<button class='token-row-button'><span class='material-symbols-outlined'>edit_note</span></button>");
+
+
+					let edit_btn=$("<button class='token-row-button edit-note'><span class='material-symbols-outlined'>edit_note</span></button>");
 					edit_btn.click(function(){
 						window.JOURNAL.edit_note(note_id);	
 					});
@@ -1498,37 +1495,7 @@ class JournalManager{
 		                name: "Rename",
 		                callback: function(itemKey, opt, originalEvent) {
 		                    //Convert the note title to an input field and focus it
-		                    const input_note_title=$(`
-		                    	<input type='text' class='input-add-chapter' value='${self.notes[note_id].title}'>
-		                    `);
-
-		                    input_note_title.keypress(function(e){
-		                    	if (e.which == 13 && input_note_title.val() !== "") {
-		                    		self.notes[note_id].title = input_note_title.val();
-		                    		self.sendNotes([self.notes[note_id]]);
-		                    		self.persist();
-		                    		self.build_journal(searchText);
-		                    	}
-
-		                    	// If the user presses escape, cancel the edit
-		                    	if (e.which == 27) {
-		                    		self.build_journal();
-		                    	}
-		                    });
-		                    input_note_title.off('click').on('click', function(e){
-		                    	e.stopPropagation();
-		                    })
-		                    input_note_title.blur(function(event){	
-		                    	let e = $.Event('keypress');
-		                        e.which = 13;
-		                        input_note_title.trigger(e);
-		                    });
-		              
-		                    let entry_title = $(element).find('.sidebar-list-item-row-details-title');
-							
-		                    entry_title.append(input_note_title);
-		                    input_note_title.focus();
-
+		                    self.show_rename_input(note_id, searchText);
 			            }   
 	            	};   
 	            	if(!self.notes[note_id].ddbsource){
@@ -1787,6 +1754,14 @@ class JournalManager{
 									left: flyoutLeft,
 									width: '400px'
 								})
+								let flyoutTop = e.clientY;
+								let flyoutHeight = flyout.height() + 25;
+								let bottom = (e.clientY + flyoutHeight);
+
+								if (bottom > window.innerHeight) {
+									flyoutTop = flyoutTop - (bottom - window.innerHeight) - 25;
+								}
+								flyout.css('top', flyoutTop);
 
 								const buttonFooter = $("<div></div>");
 								buttonFooter.css({
@@ -1831,12 +1806,19 @@ class JournalManager{
 
 		})
 	}
+	
 	display_note(id, statBlock = false){
 		let self=this;
 		let noteAlreadyOpen = $(`div.note[data-id='${id}']`).length>0;
 		
 		let note= noteAlreadyOpen ? $(`div.note[data-id='${id}']`) : $(`<div class='note' data-id='${id}'></div>`);
-		
+		const note_container = find_or_create_generic_draggable_window(`noteWindow_${id}`, self.notes[id].title, false, true, `div.note[data-id='${id}']`, "860px", "600px", undefined, undefined, false, 'input, button, .note-text', false, true)
+		//to do adjust so these attr/classes are no longer needed - they are hold over from when we used dialog instead of our own draggable window
+		note_container.attr("role", "dialog");
+		note_container.addClass(['ui-dialog', 'ui-corner-all', 'ui-widget', 'ui-widget-content', 'ui-front', 'ui-draggable', 'ui-resizable'])
+		note_container.find('.title_bar').off('dblclick.adjustClasses').on('dblclick.adjustClasses', function (event) {
+			note_container.toggleClass(['ui-dialog', 'ui-corner-all', 'ui-widget', 'ui-widget-content', 'ui-front', 'ui-draggable', 'ui-resizable']);
+		});
 		if(!noteAlreadyOpen){
 			note.attr('title',self.notes[id].title);
 			if(window.DM){
@@ -1920,7 +1902,7 @@ class JournalManager{
 				
 				let edit_btn=$("<button>Edit</button>");
 				edit_btn.click(function(){
-					note.remove();
+					note_container.remove();
 					window.JOURNAL.edit_note(id, statBlock);
 				});
 				
@@ -1930,14 +1912,12 @@ class JournalManager{
 				
 			}
 		}
-		
 		let note_text= noteAlreadyOpen ? note.find('.note-text') : $("<div class='note-text'/>");
 		if(noteAlreadyOpen){
 			note_text.empty();
 		}
 		note_text.append(self.notes[id].text); // valid tags are controlled by tinyMCE.init()
-		
-		this.translateHtmlAndBlocks(note_text, id).then(() => {
+		this.translateHtmlAndBlocks(note_text, id).then(() => {	
 			add_journal_roll_buttons(note_text);
 			this.add_journal_tooltip_targets(note_text);
 			this.block_send_to_buttons(note_text);
@@ -1949,82 +1929,30 @@ class JournalManager{
 				note.append(note_text);
 			}
 			note.find("a").attr("target", "_blank");
-			if (!noteAlreadyOpen) {
-				note.dialog({
-					draggable: true,
-					width: 860,
-					height: 600,
-					position: {
-						my: "center",
-						at: "center-200",
-						of: window
-					},
-					close: function (event, ui) {
-						$(this).remove();
-					}
-				});
-				$("[role='dialog']").draggable({
-					containment: "#windowContainment",
-					start: function () {
-						$("#resizeDragMon, .note:has(iframe) form .mce-container-body, #sheet").append($('<div class="iframeResizeCover"></div>'));
-					},
-					stop: function () {
-						$('.iframeResizeCover').remove();
-					}
-				});
-				$("[role='dialog']").resizable({
-					start: function () {
-						$("#resizeDragMon, .note:has(iframe) form .mce-container-body, #sheet").append($('<div class="iframeResizeCover"></div>'));
-					},
-					stop: function () {
-						$('.iframeResizeCover').remove();
-					}
-				});
-
-				note.parent().mousedown(function () {
-					frame_z_index_when_click($(this));
-				});
-				let btn_popout = $(`<div class="popout-button journal-button"><svg xmlns="http://www.w3.org/2000/svg" height="18px" viewBox="0 0 24 24" width="18px" fill="#000000"><path d="M0 0h24v24H0V0z" fill="none"></path><path d="M18 19H6c-.55 0-1-.45-1-1V6c0-.55.45-1 1-1h5c.55 0 1-.45 1-1s-.45-1-1-1H5c-1.11 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2v-6c0-.55-.45-1-1-1s-1 .45-1 1v5c0 .55-.45 1-1 1zM14 4c0 .55.45 1 1 1h2.59l-9.13 9.13c-.39.39-.39 1.02 0 1.41.39.39 1.02.39 1.41 0L19 6.41V9c0 .55.45 1 1 1s1-.45 1-1V4c0-.55-.45-1-1-1h-5c-.55 0-1 .45-1 1z"></path></svg></div>"`);
-				note.parent().append(btn_popout);
-				btn_popout.click(function () {
-					let uiId = $(this).siblings(".note").attr("id");
-					let journal_text = $(`#${uiId}.note .note-text`)
-					let title = self.notes[id]?.title?.trim() || $("#resizeDragMon .avtt-stat-block-container .mon-stat-block__name-link").text();
-					popoutWindow(title, note, journal_text.width(), journal_text.height());
-					removeFromPopoutWindow(title, ".visibility-container");
-					removeFromPopoutWindow(title, ".ui-resizable-handle");
-					$(window.childWindows[title].document).find("head").append(`<style id='noteStyles'>
-					body div.note[id^="ui-id"]{
-						height: 100% !important;
-					    max-height: 100% !important;
-					    overflow: auto !important;
-					}
-				</stlye>`);
-					if (!window.DM)
-						$(window.childWindows[title].document).find("body").addClass('body-rpgcharacter-sheet');
-
-					$(this).siblings(".ui-dialog-titlebar").children(".ui-dialog-titlebar-close").click();
-				});
-				note.off('click').on('click', '.tooltip-hover[href*="https://www.dndbeyond.com/sources/dnd/"], .int_source_link ', function (event) {
-					event.preventDefault();
-					render_source_chapter_in_iframe(event.target.href);
-				});
-				note.parent().css('height', '600px');
-			}
+			note_container.append(note);
+			
+			note.off('click').on('click', '.tooltip-hover[href*="https://www.dndbeyond.com/sources/dnd/"], .int_source_link ', function (event) {
+				event.preventDefault();
+				render_source_chapter_in_iframe(event.target.href);
+			});
+		
 			this.positionNotePins(id, note_text);
 		});	
 		
 	}
 	add_journal_tooltip_targets(target){
+		const monsterIds = [];
 		$(target).find('.tooltip-hover').each(function(){
-			let self = this;
-			if($(self).hasClass('note-tooltip')){
-					let noteId = $(self).attr('data-id');
-					if(noteId.replace(/[-+*&<>]/gi, '') == $(self).text().replace(/[-+*&<>\s]/gi, '')){
-						noteId = Object.keys(window.JOURNAL.notes).filter(d=> window.JOURNAL.notes[d]?.title?.trim()?.toLowerCase()?.replace(/[-+*&<>\s]/gi, '')?.includes($(self).text()?.trim()?.toLowerCase()?.replace(/[-+*&<>\s]/gi, '')))[0]
-					}
+			const self = this;
+			const $self = $(self);
+			$self.css('display', 'inline-block');
+			if($self.hasClass('note-tooltip')){
+				let noteId = $self.attr('data-id');
+				if(noteId.replace(/[-+*&<>]/gi, '') == $self.text().replace(/[-+*&<>\s]/gi, '')){
+					noteId = Object.keys(window.JOURNAL.notes).filter(d=> window.JOURNAL.notes[d]?.title?.trim()?.toLowerCase()?.replace(/[-+*&<>\s]/gi, '')?.includes($self.text()?.trim()?.toLowerCase()?.replace(/[-+*&<>\s]/gi, '')))[0]
+				}
 					
-				$(self).off('click.openNote').on('click.openNote', function(event){
+				$self.off('click.openNote').on('click.openNote', function(event){
 					event.preventDefault();
 					event.stopPropagation();
 					if(noteId != undefined)
@@ -2054,13 +1982,13 @@ class JournalManager{
 
 			
 					let hoverNoteTimer;
-					$(self).on({
+					$self.on({
 						'mouseover': function(e){
 							hoverNoteTimer = setTimeout(function () {
 								build_and_display_sidebar_flyout(e.clientY, async function (flyout) {
 						            flyout.addClass("prevent-sidebar-modal-close"); // clicking inside the tooltip should not close the sidebar modal that opened it
 						            flyout.addClass('note-flyout');
-						            $(self).toggleClass('loading-tooltip', false);
+						            $self.toggleClass('loading-tooltip', false);
 						            const tooltipHtml = $(noteHover);
 									await window.JOURNAL.translateHtmlAndBlocks(tooltipHtml, noteId);
 									add_journal_roll_buttons(tooltipHtml);
@@ -2084,6 +2012,14 @@ class JournalManager{
 										left: flyoutLeft,
 										width: '400px'
 									})
+									let flyoutTop = e.clientY;
+									let flyoutHeight = flyout.height() + 25;
+									let bottom = (e.clientY + flyoutHeight);
+
+									if (bottom > window.innerHeight) {
+										flyoutTop = flyoutTop - (bottom - window.innerHeight) - 25;
+									}
+									flyout.css('top', flyoutTop);
 
 									const buttonFooter = $("<div></div>");
 									buttonFooter.css({
@@ -2129,22 +2065,123 @@ class JournalManager{
 
 				return;	
 			}
-			
-
-
-			if(!$(self).attr('data-tooltip-href')){
-				
+			const addMonsterButton = function(){
+				if ($self.hasClass('monster-tooltip')) {
+					$self.css('display', 'inline-block')
+					const monsterId = $self.attr('data-tooltip-href').match(/monsters\/(\d+)/i)?.[1];
+					$self.attr('data-monsterid', monsterId);
+					monsterIds.push(monsterId);
+					window.JOURNAL.addTokenDragToMonsterLink(self);
+				}
+			}
+			if(!$self.attr('data-tooltip-href')){
 				if(self.href.match(/\/spells\/[0-9]|\/magic-items\/[0-9]|\/monsters\/[0-9]|\/sources\//gi)){
-					$(self).attr('data-moreinfo', `${self.href}`);
+					$self.attr('data-moreinfo', `${self.href}`);
 				}	
 				window.JOURNAL.getDataTooltip(self.href, function(url, typeClass){
-					$(self).attr('data-tooltip-href', url);
-					$(self).toggleClass(`${typeClass}-tooltip`, true);
-				});
+					$self.attr('data-tooltip-href', url);
+					$self.toggleClass(`${typeClass}-tooltip`, true);
+					addMonsterButton();
+				});	
+			} else{
+				addMonsterButton();
 			}
-		});
-	}
 
+		});
+		if (monsterIds.length>0)
+			fetch_and_cache_monsters(monsterIds);
+	}
+	addTokenDragToMonsterLink(target){
+		const $target = $(target);
+		const monsterId = $target.attr('data-monsterid');
+		if (monsterId) {
+			const defaultSize = window.CURRENT_SCENE_DATA.hpps / 1 / window.ZOOM;
+			const tokenIcon = $(`<span class="material-symbols-outlined" style="user-select: none;display: inline-block;cursor: pointer;font-size: 91%;margin-left: 1px;padding-bottom: 3px;vertical-align: middle;">person_add</span>`)
+			$target.after(tokenIcon);
+			let tokenImgSrc;
+			tokenIcon.off('pointerup.droptoken').on('pointerup.droptoken',function(event){
+				if (window.cached_monster_items[monsterId]){
+					create_and_place_token(window.cached_monster_items[monsterId], event.shiftKey)
+					return;
+				}
+				fetch_and_cache_monsters([monsterId], function () {
+					create_and_place_token(window.cached_monster_items[monsterId], event.shiftKey)
+				});
+			})
+			tokenIcon.draggable({
+				addClasses: false,
+				scroll: true,
+				cursorAt: { left: 0, top: 0 },
+				containment: "#windowContainment",
+				distance: 5,
+				appendTo: 'body',
+				zIndex: 10000000,
+				helper: (event) => {
+					const helper = $(`<img class='draggable-token-creation' style='pointer-events:none;width:${defaultSize}; height:${defaultSize}'; src='${defaultAvatarUrl}'/>`)
+					const setHelper = () => {
+						tokenImgSrc = random_image_for_item(window.cached_monster_items[monsterId]);
+						helper.attr("data-src", tokenImgSrc);
+						if (tokenImgSrc.startsWith('above-bucket-not-a-url')) {
+							getAvttStorageUrl(tokenImgSrc).then((url) => {
+								helper.attr("src", url);
+							})
+						}
+						else {
+							helper.attr("src", tokenImgSrc);
+						}
+						let [helperWidth, helperHeight] = get_helper_size(window.cached_monster_items[monsterId])
+						$(helper).css({
+							'width': `${helperWidth}px`,
+							'height': `${helperHeight}px`
+						});
+					}
+					if (window.cached_monster_items[monsterId]) {
+						setHelper();
+						return helper;
+					}
+					fetch_and_cache_monsters([monsterId], function () {
+						setHelper();
+					});
+					return helper;
+				},
+				start: function (event, ui) {
+					$("#resizeDragMon, .note:has(iframe) form .mce-container-body, #sheet").append($('<div class="iframeResizeCover"></div>'));;
+					window.orig_zoom = window.ZOOM;
+				},
+				drag: function (event, ui) {
+					if (event.shiftKey) {	
+						$(ui.helper).css("opacity", 0.5);
+					} else {
+						$(ui.helper).css("opacity", 1);
+					}
+					const setHelperPosition = () => {
+						let [helperWidth, helperHeight] = get_helper_size(window.cached_monster_items[monsterId])
+						ui.position = {
+							left: (ui.position.left - (helperWidth / 2)),
+							top: (ui.position.top - (helperHeight / 2))
+						};
+					}
+					if (window.cached_monster_items[monsterId]) {
+						setHelperPosition();
+						return;
+					}
+				},
+				stop: function (event, ui) {
+					$(".iframeResizeCover").remove();
+					let droppedOn = $(document.elementFromPoint(event.clientX, event.clientY));
+					if (droppedOn.closest('#VTT').length > 0) {
+						if (window.cached_monster_items[monsterId]) {
+							create_and_place_token(window.cached_monster_items[monsterId], event.shiftKey, tokenImgSrc, event.pageX, event.pageY)
+							return;
+						}
+						fetch_and_cache_monsters([monsterId], function () {
+							create_and_place_token(window.cached_monster_items[monsterId], event.shiftKey)
+						});
+					}
+				},
+			})
+		}
+	}
 	async getDataTooltip(url, callback){
 		if(window.spellIdCache == undefined){
 			window.spellIdCache = {};
@@ -2202,7 +2239,7 @@ class JournalManager{
 		const blocks = target.find('img:not(.mon-stat-block__separator-img), .text--quote-box, .rules-text, .block-torn-paper, .read-aloud-text, .dmScreenChunk')
 
 		const sendToGamelogButton = $('<button class="block-send-to-game-log"><span class="material-symbols-outlined">login</span></button>')
-		const container = $(`<div class='note-text' style='position:relative; width:'></div>`)
+
 		
 	
 
@@ -2272,12 +2309,15 @@ class JournalManager{
 		
 		const allDiceRegex = /(\d+)?d(?:100|20|12|10|8|6|4)((?:kh|kl|ro(<|<=|>|>=|=)|min=)\d+)*/g; // ([numbers]d[diceTypes]kh[numbers] or [numbers]d[diceTypes]kl[numbers]) or [numbers]d[diceTypes]
        	
-   		blocks.wrap(function(){
-			if(this instanceof HTMLImageElement){
-				container.css('width', 'fit-content');
+   		blocks.wrap(function(i){
+			const container = $(`<div class='note-text' style='position:relative;max-width: 100%;'></div>`)
+			if(blocks[i] instanceof HTMLImageElement){
+				container.css({
+					'min-width': 'fit-content',
+					'width': 'fit-content'
+				});
 				$(this).attr('href', $(this).attr('src'));
 			}
-
 			return container;
 		});
 		sendToGamelogButton.clone(true, true).insertAfter(blocks);
@@ -2408,7 +2448,7 @@ class JournalManager{
 			return [];
 		}
 		for (const entry of entries) {
-			const keyValue = typeof entry === 'string' ? entry : entry?.Key || entry?.key || '';
+			const keyValue = typeof entry === 'string' ? entry : entry?.Key || '';
 			if (!keyValue) {
 				continue;
 			}
@@ -2600,22 +2640,22 @@ class JournalManager{
             );
             // Search for spell casting section
             const spellcasting = lines.findIndex((l) =>
-                l.match(/Spellcasting([^.]+)?./g)
+                l.match(/(?<!<[^>]+)Spellcasting([^.]+)?./g)
             );
             // If we find the section, loop through the levels
             if (
                 spellcasting >= 0 &&
                 spellcasting < li &&
-                (input.match(/At will:/gi) ||
-                    input.match(/Cantrips \(at will\):/gi) ||
-                    input.match(/(\d+\/day( each)?|\d+\w+ level \(\d slots?\))\:/gi))
+                (input.match(/(?<!<[^>]+)At will:/gi) ||
+                    input.match(/(?<!<[^>]+)Cantrips \(at will\):/gi) ||
+                    input.match(/(?<!<[^>]+)(\d+\/day( each)?|\d+\w+ level \(\d slots?\))\:/gi))
             ) {
-            	let eachNumberFound = (input.match(/\d+\/day( each)?/gi)) ? parseInt(input.match(/[0-9]+(?![0-9]?px)/gi)[0]) : undefined;
-            	let slotsNumberFound = (input.match(/\d+\w+ level \(\d slots?\)\:/gi)) ? parseInt(input.match(/[0-9]+/gi)[1]) : undefined;
+            	let eachNumberFound = (input.match(/(?<!<[^>]+)\d+\/day( each)?/gi)) ? parseInt(input.match(/(?<!<[^>]+)[0-9]+(?![0-9]?px)/gi)[0]) : undefined;
+            	let slotsNumberFound = (input.match(/(?<!<[^>]+)\d+\w+ level \(\d slots?\)\:/gi)) ? parseInt(input.match(/(?<!<[^>]+)[0-9]+/gi)[1]) : undefined;
             	let spellLevelFound = (slotsNumberFound) ? input.match(/\d+\w+ level/gi)[0] : undefined;
-                let parts = input.split(/(:\s(?<!(left:\s?|style="[\s\S]+?))|:(?<!(left:\s?|style="[\s\S]+?))<\/strong>(\s)?)/gi);
+                let parts = input.split(/((?<!<[^>]+):)/i);
                 let i = parts.length - 1;
-                parts[i] = parts[i].split(/,\s(?![^(]*\))/gm);
+                parts[i] = parts[i].split(/(?<!<[^>]+),(?![^(]*\))/gm);
                 for (let p in parts[i]) {
 
                 	if(parts[i][p].match(/^((\s+?)?(<a|<span))/gi) && $(parts[i][p])?.is('a, span[data-spell]'))
@@ -2992,7 +3032,11 @@ class JournalManager{
 				const name = $(this).closest('tr').find('.item-link-cell a').text();
 				
 				const itemData = find_items_in_cache_by_id_and_name([{id, name}]);
-				
+				if (itemData.length === 0) {
+					console.warn("Item not found", [{id, name}]);
+					return;
+				}
+
 				console.log(`[PartyLoot] Adding ${quantity} of item ${name} to queue`);
 				
 				if (quantity > 10){
@@ -3069,7 +3113,8 @@ class JournalManager{
 		}
 	}
 	edit_note(id, statBlock = false){
-		$(`div.note[data-id='${id}']`)?.dialog("close");
+		$(`.ui-dialog:not(.resize_drag_window) div.note[data-id='${id}']`)?.dialog("close");
+		$(`.resize_drag_window[id="${id}"]`).remove();
 		this.close_all_notes();
 		let self=this;
 		
@@ -3132,9 +3177,7 @@ class JournalManager{
 				$('.iframeResizeCover').remove();			
 			}
 		});
-		note.parent().mousedown(function() {
-			frame_z_index_when_click($(this));
-		});
+		frame_z_index_when_click(note.parent(), true);
 		
 		const debounceNoteSave = mydebounce(function(e, editor){
 		    if(editor.isDirty()){
@@ -3931,40 +3974,6 @@ class JournalManager{
 			    bottom: -3px
 			}
 			@font-face {
-			    font-family: Scala Sans Offc;
-			    font-style: normal;
-			    font-weight: 700;
-			    src: url(https://media.dndbeyond.com/encounter-builder/static/media/ScalaSansOffc-Bold.048d2d142baf798dc56f.ttf) format("truetype")
-			}
-
-			@font-face {
-			    font-family: Scala Sans Offc;
-			    font-style: normal;
-			    font-weight: 400;
-			    src: url(https://media.dndbeyond.com/encounter-builder/static/media/ScalaSansOffc.0eea070d2279b1a6be23.ttf) format("truetype")
-			}
-
-			@font-face {
-			    font-family: Scala Sans Offc;
-			    font-style: italic;
-			    font-weight: 700;
-			    src: url(https://media.dndbeyond.com/encounter-builder/static/media/ScalaSansOffc-BoldIta.740e4d6d85a09a9cd0a0.ttf) format("truetype")
-			}
-
-			@font-face {
-			    font-family: Scala Sans Offc;
-			    font-style: italic;
-			    font-weight: 400;
-			    src: url(https://media.dndbeyond.com/encounter-builder/static/media/ScalaSansOffc-Ita.86c4513e1c4b869189c2.ttf) format("truetype")
-			}
-
-			@font-face {
-			    font-family: MrsEavesSmallCaps;
-			    font-style: normal;
-			    font-weight: 100;
-			    src: url(https://media.dndbeyond.com/encounter-builder/static/media/MrsEavesSmallCaps.1744d7a566b5a2ccca6c.ttf) format("truetype")
-			}
-			@font-face {
 			  font-family: "Tiamat Condensed SC Regular";
 			  src: url("https://www.dndbeyond.com/fonts/tiamatcondensedsc-regular-webfont.woff2") format("woff2");
 			}
@@ -4336,7 +4345,7 @@ class JournalManager{
 				},
 			],
 		  	table_grid: false,
-			toolbar: 'undo styleselect template | horizontalrules | bold italic underline strikethrough | alignleft aligncenter alignright justify| outdent indent | bullist numlist | forecolor backcolor | fontsizeselect | link unlink | image media filePickers table tableCustom | code',
+			toolbar: 'undo styleselect template | horizontalrules | bold italic underline strikethrough | alignleft aligncenter alignright justify| outdent indent | bullist numlist | fontsizeinput forecolor backcolor | link unlink | image media filePickers table tableCustom | code',
 			image_class_list: [
 				{title: 'Magnify', value: 'magnify'},
 			],
@@ -4348,7 +4357,27 @@ class JournalManager{
 			   {title: 'DDB Tooltip Link (Spells, Monsters, Magic Items, Source)', value: 'tooltip-hover no-border ignore-abovevtt-formating'}
 			],
 			valid_children : '+body[style]',
+			
 			setup: function (editor) { 
+				editor.addButton('fontsizeinput', {
+					type: 'container',
+					html: '<input type="number" id="mce-custom-font-size" style="width: 40px;height: 16px;text-align:right;padding: 4px 1px;" placeholder="px"> px',
+					onPostRender: function() {
+						let input = document.getElementById('mce-custom-font-size');
+						input.addEventListener('change', function(e) {
+							let size = this.value;
+							if (size) {
+								editor.execCommand('FontSize', false, size + 'px');
+							}
+						});
+						input.addEventListener('keypress', function(e) {
+							if(e.key === 'Enter') {
+								e.preventDefault();
+								this.blur();
+							}
+						});
+					}
+				});
 				editor.on("keydown", function (e) {
 					if (e.which == "13" || e.keyCode == "13") {
 						
@@ -4380,6 +4409,7 @@ class JournalManager{
 						
 					}
 				});
+
 				editor.addButton('horizontalrules', {
 					  type: 'splitbutton',
 				      text: '',
@@ -4587,8 +4617,11 @@ class JournalManager{
 
 					editor.execCommand('setAvttImageSrc', e);
 				});
-
 				editor.on('NodeChange', async function (e) {
+					const currentFontSize = editor.dom.getStyle(e.element, 'font-size', true);
+					if (currentFontSize) {
+						$("#mce-custom-font-size").val(parseInt(currentFontSize));
+					}
 					// When an image is inserted into the editor
 				    if (e.element.tagName === "IMG") { 
 				    	let url = e.element.getAttribute('src');
@@ -4783,8 +4816,34 @@ function render_source_chapter_in_iframe(url) {
 			iframeContents.find("body").css('background', '#f9f9f9 url(../images/background_texture.png) repeat');
 		}
 
-		iframeContents.find("body").append($(`<style id='ddbSourceStyles'>
+		setTimeout(()=>{
+			const monsterIds = [];
+			iframeContents.find('.monster-tooltip').each((i, ele) => {
+				const $target = $(ele);
+				const monsterId = $target.attr('data-tooltip-href').match(/monsters\/(\d+)/i)?.[1];
+				if(monsterId){
+					monsterIds.push(monsterId);
+					const tokenIcon = $(`<span class="material-symbols-outlined" style="user-select: none;display: inline-block;cursor: pointer;font-size: 91%;margin-left: 1px;padding-bottom: 3px;vertical-align: middle;">person_add</span>`)
+					$target.after(tokenIcon);
+					tokenIcon.off('pointerup.droptoken').on('pointerup.droptoken', function (event) {
+						if (window.top.cached_monster_items[monsterId]) {
+							create_and_place_token(window.cached_monster_items[monsterId], event.shiftKey)
+							return;
+						}
+						fetch_and_cache_monsters([monsterId], function () {
+							create_and_place_token(window.top.cached_monster_items[monsterId], event.shiftKey)
+						});
+					})
+				}
+			})
+			if(monsterIds.length >0)
+				fetch_and_cache_monsters(monsterIds);
+		}, 2000)
 
+		iframeContents.find("head").append('<link rel="stylesheet" href="https://fonts.googleapis.com/icon?family=Material+Icons"></link>');
+		iframeContents.find("head").append('<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20..48,100..700,0..1,-50..200" />');
+
+		iframeContents.find("body").append($(`<style id='ddbSourceStyles'>
 		body, html body.responsive-enabled{
 			background: var(--theme-page-bg-color,#f9f9f9) !important;
 			background-position: center 0px !important;

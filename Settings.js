@@ -126,7 +126,7 @@ function token_setting_options() {
 				{ value: false, label: "Above darkness", description: "The token will appear above darkness/light" }
 			],
 			defaultValue: false,
-			menuPosition: '13',
+			menuPosition: '14',
 			player: true
 		},
 		{
@@ -168,7 +168,7 @@ function token_setting_options() {
 				{ value: false, label: 'Border', description: "The token has a border around it." }
 			],
 			defaultValue: false,
-			menuPosition: '12',
+			menuPosition: '13',
 			player: true
 		},
 		{
@@ -353,6 +353,25 @@ function avtt_settings() {
 			defaultValue: false,
 			class: 'ui',
 			global: 1
+		},
+		{	
+			name: "gridZoomConversion",
+			label: "Store Grid Visual Size",
+			description: "<p>This allows you to save a grid visual size. This is useful for in person play where you want to quickly set the grid size to match physical mini sizes.</p><p>The stored value will be based on the current scenes grid size and zoom level. It will then be able to calculate the correct zoom level to make the grid match the stored visual size on any scene. This may be different per device so you will have to store the value on the device you plan on adjusting zoom to match the stored visual size.</p><p>A quick toggle button will be added to the right side buttons when a value is stored</p>",
+			buttonText: ["Clear", "Store"],
+			type: "customButton",
+			customFunction: [
+				function (clickEvent, body) {
+					clear_avtt_setting('gridZoomConversion');
+					showTempMessage(`Grid visual size cleared`, { fadeDelay: 600, fadeTime: 400 });
+					$("#grid_zoom_conversion").css('display', 'none');
+				}, function (clickEvent, body) {
+					set_avtt_setting_value('gridZoomConversion', window.ZOOM*parseFloat(window.CURRENT_SCENE_DATA.hpps));
+					showTempMessage(`Grid visual size stored`, { fadeDelay: 600, fadeTime: 400 });
+					$("#grid_zoom_conversion").css('display', '');
+				}
+			],
+			class: 'ui'
 		},
 		{
 			name: "disableCombatText",
@@ -836,6 +855,31 @@ function scene_setting_options(){
 			defaultValue: false
 		},
 		{
+			name: 'grid_color',
+			label: 'Grid Color',
+			type: 'colorSelect',
+			defaultValue: '#000'
+		},
+		{
+			name: 'gridOver',
+			label: 'Grid Layer',
+			type: 'dropdown',
+			options: [
+				{ value: 0, label: "Under Darkness/Fog", description: "Grid will be drawn under darkness/fog" },
+				{ value: 1, label: "Over Darkness/Fog", description: "Grid will be drawn over darkness/fog" }
+			],
+			defaultValue: false
+		},
+		{
+			name: 'grid_line_width',
+			label: 'Grid Line Width',
+			type: 'rangeInput',
+			options: [
+				{ min: 0.5, max: 10, step: 0.5, description: "Grid line width" },
+			],
+			defaultValue: 1
+		},
+		{
 			name: 'snap',
 			label: 'Snap to Grid',
 			type: 'toggle',
@@ -986,7 +1030,10 @@ function set_avtt_setting_value(name, newValue) {
 			break;
 	}
 }
-
+function clear_avtt_setting(name){
+	delete window.EXPERIMENTAL_SETTINGS[name];
+	persist_experimental_settings(window.EXPERIMENTAL_SETTINGS);
+}
 function is_valid_token_option_value(tokenOptionName, value) {
 	return token_setting_options().find(o => o.name === tokenOptionName)?.options?.map(value).includes(value);
 }
@@ -1553,18 +1600,9 @@ function update_token_base_visibility(container) {
 function enable_dice_streaming_feature(enabled){
 	if(enabled)
 	{
-		if($(".stream-dice-button").length>0)
-			return;
-		$(".glc-game-log>[class*='Container-Flex']").append($(`<div  id="stream_dice"><div class='stream-dice-button'>Dice Stream Disabled</div></div>`));
+		window.JOINTHEDICESTREAM = true;
+		add_dice_stream_gamelog_button();
 		update_dice_streaming_feature(window.JOINTHEDICESTREAM);
-		$(".stream-dice-button").off().on("click", function(){
-			if(window.JOINTHEDICESTREAM){
-				update_dice_streaming_feature(false);
-			}
-			else {
-				update_dice_streaming_feature(true);
-			}
-		})
 	}
 	else{
 		$(".stream-dice-button").remove();
@@ -1603,10 +1641,7 @@ function update_dice_streaming_feature(enabled, sendToText=gamelog_send_to_text(
 				}
 			});
 		});
-
-
 		if (window.JOINTHEDICESTREAM) {
-
 			joinDiceRoom();
 			setTimeout(function(){
 				if (sendToText == "Dungeon Master" || sendToText == "DM"){
@@ -1676,7 +1711,6 @@ function export_current_scene(){
 		journalchapters: [],
 		soundpads: {}
 	};
-	delete DataFile.scenes[0].itemType;
 	delete DataFile.scenes[0].map;
 	for(tokenID in window.TOKEN_OBJECTS){
 		let statBlockID = window.TOKEN_OBJECTS[tokenID].options.statBlock
@@ -1712,7 +1746,6 @@ async function export_scene_context(sceneId){
 		journalchapters: [],
 		soundpads: {}
 	};
-	delete DataFile.scenes[0].itemType;
 	let tokensObject = {}
 	for(let token in scene.data.tokens){
 

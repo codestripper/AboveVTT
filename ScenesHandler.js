@@ -27,102 +27,6 @@ class ScenesHandler { // ONLY THE DM USES THIS OBJECT
 			$("#darkness_layer").css('visibility', 'visible');
 		};
 
-		let grid_10 = function() {
-			$("#wizard_popup").empty().append("Do you want me to subdivide the map grid in 2 so you can get correct token size? <button id='grid_divide'>Yes</button> <button id='grid_nodivide'>No</button>");
-
-			$("#grid_divide").click(function() {
-				
-				$("#scene_selector_toggle").show();
-				$("#tokens").show();
-				$("#wizard_popup").empty().append("You're good to go! AboveVTT is now super-imposing a grid that divides the original grid map in half. If you want to hide this grid just edit the manual grid data.");
-				window.CURRENT_SCENE_DATA = {
-					...window.CURRENT_SCENE_DATA,
-					hpps: window.CURRENT_SCENE_DATA.hpps/2,
-					vpps: window.CURRENT_SCENE_DATA.vpps/2,
-					upsq: "ft",
-					fpsq: "5",
-					grid_subdivided: "1"
-				}
-				consider_upscaling(window.CURRENT_SCENE_DATA);
-				$("#exitWizard").remove();
-				$("#wizard_popup").delay(5000).animate({ opacity: 0 }, 4000, function() {
-					$("#wizard_popup").remove();
-				});
-				window.ScenesHandler.persist_current_scene();
-				$("#light_container").css('visibility', 'visible');
-				$("#darkness_layer").css('visibility', 'visible');
-			});
-
-			$("#grid_nodivide").click(function() {
-				
-				$("#scene_selector_toggle").show();
-				$("#tokens").show();
-				window.CURRENT_SCENE_DATA= {
-					...window.CURRENT_SCENE_DATA,
-					upsq: "ft",
-					fpsq: "10",
-					grid_subdivided: "0",
-					snap: "1",
-					grid: "0"
-				}
-				consider_upscaling(window.CURRENT_SCENE_DATA);
-				window.ScenesHandler.persist_current_scene();
-				$("#exitWizard").remove();
-				$("#wizard_popup").empty().append("You're good to go! Medium token will match the original grid size");
-				$("#wizard_popup").delay(5000).animate({ opacity: 0 }, 4000, function() {
-					$("#wizard_popup").remove();
-				});
-				$("#light_container").css('visibility', 'visible');
-				$("#darkness_layer").css('visibility', 'visible');
-			});
-		}
-
-		let grid_15 = function() {
-			
-			$("#scene_selector_toggle").show();
-			$("#tokens").show();
-			$("#wizard_popup").empty().append("You're good to go! Token will be of the correct scale. We don't currently support overimposing a grid in this scale..'");
-			window.CURRENT_SCENE_DATA = {
-				...window.CURRENT_SCENE_DATA,
-				hpps: window.CURRENT_SCENE_DATA.hpps/3,
-				vpps: window.CURRENT_SCENE_DATA.vpps/3,
-				upsq: "ft",
-				fpsq: "5",
-				grid_subdivided: "0"
-			}
-			consider_upscaling(window.CURRENT_SCENE_DATA);
-			$("#wizard_popup").delay(5000).animate({ opacity: 0 }, 4000, function() {
-				$("#wizard_popup").remove();
-			});
-			window.ScenesHandler.persist_current_scene();
-			$("#exitWizard").remove();
-			$("#light_container").css('visibility', 'visible');
-			$("#darkness_layer").css('visibility', 'visible');
-		}
-
-
-		let grid_20 = function() {
-			
-			$("#scene_selector_toggle").show();
-			$("#tokens").show();
-			$("#wizard_popup").empty().append("You're good to go! Token will be of the correct scale.");
-			window.CURRENT_SCENE_DATA = {
-				...window.CURRENT_SCENE_DATA,
-				hpps: window.CURRENT_SCENE_DATA.hpps/4,
-				vpps: window.CURRENT_SCENE_DATA.vpps/4,
-				upsq: "ft",
-				fpsq: "5",
-				grid_subdivided: "0"
-			}
-			consider_upscaling(window.CURRENT_SCENE_DATA);
-			$("#wizard_popup").delay(5000).animate({ opacity: 0 }, 4000, function() {
-				$("#wizard_popup").remove();
-			});
-			window.ScenesHandler.persist_current_scene();
-			$("#exitWizard").remove();
-			$("#light_container").css('visibility', 'visible');
-			$("#darkness_layer").css('visibility', 'visible');
-		}
 
 		let align_grid = function(square = false, just_rescaling = true, copiedSceneData) {
 
@@ -298,20 +202,12 @@ class ScenesHandler { // ONLY THE DM USES THIS OBJECT
 					width = 2;
 				else
 					width = 1;
-				const dash = [30, 5]
-				const color = "rgba(255, 0, 0,0.5)";
+				const dash = [30, 5];
+				const color = "rgba(255, 0, 0, 1)";
 				// nulls will take the window.current_scene_data from above
 				window.CURRENT_SCENE_DATA.gridType = $('#gridType input:checked').val();
-				if(window.CURRENT_SCENE_DATA.gridType == 1){
-					redraw_grid(null,null,null,null,color,width,null,dash)
-				}
-				else if(window.CURRENT_SCENE_DATA.gridType == 2){
-					redraw_hex_grid(null,null,null,null,color,width,null,dash,false)
-				}
-				else if(window.CURRENT_SCENE_DATA.gridType == 3){
-					redraw_hex_grid(null,null,null,null,color,width,null,dash,true)
-				}
-				
+				window.CURRENT_SCENE_DATA.gridOver = 1;
+				redraw_grid(null,null,null,null,color,width,null,dash)
 			};
 
 			let click2 = {
@@ -515,9 +411,7 @@ class ScenesHandler { // ONLY THE DM USES THIS OBJECT
 		scene['scaleY'] = (60.0 / parseInt(scene['vpps'])); // for backward compatibility, this will be horizonat sca
 
 		$("#tokens").show();
-		$("#grid_overlay").show();
 		$(".alphaNumGrid").remove();
-
 
 		window.FOG_OF_WAR = true;
 		window.REVEALED = [[0, 0, 0, 0, 2, 0]].concat(self.scene.reveals);
@@ -546,7 +440,8 @@ class ScenesHandler { // ONLY THE DM USES THIS OBJECT
 		load_scenemap(map_url, map_is_video, window.CURRENT_SCENE_DATA.width, window.CURRENT_SCENE_DATA.height, window.CURRENT_SCENE_DATA.UVTTFile, async function() {
 			$("#scene_map").off("load");
 			delete window.LOADING;
-			await reset_canvas();
+			const continueLoading = await reset_canvas();
+			if(!continueLoading) return;
 			await set_default_vttwrapper_size()
 			align_grid(false, false, copiedSceneData);
 			window.WeatherOverlay.stop();
@@ -587,7 +482,7 @@ class ScenesHandler { // ONLY THE DM USES THIS OBJECT
 				let keyword = url.replaceAll(/https:\/\/www\.dndbeyond\.com|^\/?sources\/|/gi, '');
 
 				if (keyword in self.sources){ // OBJECT ALREADY EXISTS... evito di riscrivere per non perdere i dati
-					scraped_sources[keyword]=self.sources.keyword;
+					scraped_sources[keyword]=self.sources[keyword];
 					return;
 				}
 				scraped_sources[keyword] = {
@@ -608,7 +503,7 @@ class ScenesHandler { // ONLY THE DM USES THIS OBJECT
 							return ((scraped_sources[a].title == scraped_sources[b].title) ? 0 : ((scraped_sources[a].title > scraped_sources[b].title) ? 1 : -1));
 						}
 						else {
-							return (a.ddbtype == "Adventures") ? 1 : -1;
+							return (scraped_sources[a].ddbtype == "Adventures") ? 1 : -1;
 						}
 					}
 				)
@@ -732,7 +627,9 @@ class ScenesHandler { // ONLY THE DM USES THIS OBJECT
 				dm_map_usable: "0",
 				thumb: thumb,
 				tokens: {},
-			});		
+			});
+			callback();
+			return;
 		}
 
 		let f = $("<iframe src='" + chapter_url + "'></iframe>");
@@ -972,10 +869,6 @@ class ScenesHandler { // ONLY THE DM USES THIS OBJECT
 
 		if (!(id in window.TOKEN_OBJECTS)) {
 			window.TOKEN_OBJECTS[id] = new Token(options);
-
-			window.TOKEN_OBJECTS[id].sync = mydebounce(function(options) {
-				window.MB.sendMessage('custom/myVTT/token', options);
-			}, 300);
 		}
 
 		if(options.repositionAoe != undefined){

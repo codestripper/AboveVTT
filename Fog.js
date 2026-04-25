@@ -1,4 +1,10 @@
 const POLYGON_CLOSE_DISTANCE = 15;
+const WALL_UNDO_MAX = 100;
+function pushWallUndo(entry) {
+	if (!window.wallUndo) window.wallUndo = [];
+	window.wallUndo.push(entry);
+	if (window.wallUndo.length > WALL_UNDO_MAX) window.wallUndo.shift();
+}
 const doorColors = {
 	0: {
 		'open': "rgba(255, 100, 255, 0.5)", // door
@@ -68,15 +74,21 @@ function sync_fog(){
 	window.MB.sendMessage("custom/myVTT/fogdata",window.REVEALED);
 }
 
-function sync_drawings(newDraw = true){
-
+function sync_drawings(options = {newDraw: true, wallsChanged: false}){
+	const {newDraw, wallsChanged} = {newDraw: true, wallsChanged: false, ...options};
 	if(!window.DM && newDraw == true){
 		if(window.playerDrawUndo == undefined)
 			window.playerDrawUndo = [];
 		window.playerDrawUndo.push(window.DRAWINGS[window.DRAWINGS.length-1]);
+		if (window.playerDrawUndo.length > WALL_UNDO_MAX) window.playerDrawUndo.shift();
 	}
-	
+	if(wallsChanged)
+		window.DRAWINGS.unshift("wallsChanged");
+
 	window.MB.sendMessage("custom/myVTT/drawdata",window.DRAWINGS);
+
+	if(wallsChanged)
+		window.DRAWINGS.shift();
 }
 
 
@@ -379,9 +391,9 @@ class WaypointManagerClass {
 		const rulerType = $('#ruler_menu .button-enabled').attr('data-type');
 		if(window.CURRENT_SCENE_DATA.gridType != undefined){
 			if((xLength > yLength && window.CURRENT_SCENE_DATA.gridType != 1 && rulerType != 'euclidean') || (window.CURRENT_SCENE_DATA.gridType == 2 && rulerType == 'euclidean')){
-				gridSize = window.hexGridSize.width/window.CURRENT_SCENE_DATA.scale_factor;
+				gridSize = grid_size(true, false)[0];
 			} else if((xLength < yLength && window.CURRENT_SCENE_DATA.gridType != 1 && rulerType != 'euclidean' )|| (window.CURRENT_SCENE_DATA.gridType == 3 && rulerType == 'euclidean')){
-				gridSize = window.hexGridSize.height/window.CURRENT_SCENE_DATA.scale_factor;
+				gridSize = grid_size(true, false)[1];
 			}
 		}
 		
@@ -704,8 +716,8 @@ function is_door_in_visible_light(door, imageData){
 	if (imageData == undefined) {
 		return false;
 	}
-	const centerX = parseFloat($(door).css('--mid-x')) / window.CURRENT_SCENE_DATA.scale_factor;
-	const centerY = parseFloat($(door).css('--mid-y')) / window.CURRENT_SCENE_DATA.scale_factor;
+	const centerX = parseInt($(door).css('--mid-x')) / window.CURRENT_SCENE_DATA.scale_factor;
+	const centerY = parseInt($(door).css('--mid-y')) / window.CURRENT_SCENE_DATA.scale_factor;
 	let pixeldata;
 
 	for(let x=centerX-10; x<=centerX+10; x++){
@@ -788,13 +800,13 @@ function check_single_token_visibility(id){
 		inTruesight = is_token_under_truesight_aura(id, truesightData);
 	}
 	if (showThisPlayerToken !== true && (hideThisTokenInFogOrDarkness === true && inVisibleLight !== true || (window.TOKEN_OBJECTS[id].options.hidden === true && inTruesight !== true) || (hideInvisible === true && inTruesight !== true))) {
-		$(selector + "," + auraSelector).hide();
+		$(selector + "," + auraSelector).toggleClass('notVisible', true);
 	}
 	else if (window.TOKEN_OBJECTS[id].options.hidden !== true || inTruesight === true) {
 		$(selector).css('opacity', 1);
-		$(selector).show();
+		$(selector).toggleClass('notVisible', false);
 		if(window.TOKEN_OBJECTS[id].options.hideaura !== true && id !== playerTokenId)
-			$(auraSelector).show();
+			$(auraSelector).toggleClass('notVisible', false);
 		//console.log('SHOW '+id);
 	}
 }
@@ -835,9 +847,13 @@ function do_check_token_visibility() {
 	if(window.LOADING)
 		return;
 	if((window.DM && !window.SelectedTokenVision) || (window.DM && $('#tokens .tokenselected:not(.isAoe)').length == 0)){
-		$(`.token`).show();
+		$(`.token`).toggleClass('notVisible', false);
 		$(`.door-button`).toggleClass('notVisible', false);
-		$(`.aura-element`).show();
+		$(`.aura-element`).toggleClass('notVisible', false);
+		return;
+	}
+	if(!window.walls){
+		console.warn("Token visibility check called before walls loaded");
 		return;
 	}
 
@@ -956,9 +972,10 @@ function do_check_token_visibility() {
 		}
 	}
 	
-	hideIds.hide();
-	showTokenIds.css({ 'opacity': 1, 'display': 'flex' });
-	showAuraIds.show();
+	hideIds.toggleClass('notVisible', true);
+	showTokenIds.css({ 'opacity': 1 });
+	showTokenIds.toggleClass('notVisible', false);
+	showAuraIds.toggleClass('notVisible', false);
 	dmSelectedTokens.css({ 'display': 'flex' });
 
 	showDoors.toggleClass('notVisible', false);
@@ -1045,109 +1062,9 @@ function midPointBtw(p1, p2) {
 }
 
 function clear_grid(){
-	const gridCanvas = document.getElementById("grid_overlay");
-	const gridContext = gridCanvas.getContext("2d");
-	gridContext.clearRect(0, 0, gridCanvas.width, gridCanvas.height);
+	draw_svg_grid("0");
 }
-function redraw_hex_grid(hpps=null, vpps=null, offsetX=null, offsetY=null, color=null, lineWidth=null, subdivide=null, dash=[], columns=true, drawGrid = window.CURRENT_SCENE_DATA.grid){
-	
-	window.gridCentersArray = [];
-	if (window.CURRENT_SCENE_DATA.scaleAdjustment == undefined){
-		window.CURRENT_SCENE_DATA.scaleAdjustment = {x:1, y:1};
-	}
-	const gridCanvas = document.getElementById("grid_overlay");
-	gridCanvas.width = $('#scene_map').width() / window.CURRENT_SCENE_DATA.scaleAdjustment.x
-	gridCanvas.height = $('#scene_map').height() / window.CURRENT_SCENE_DATA.scaleAdjustment.y;
-	const gridContext = gridCanvas.getContext("2d");
-	if(window.CURRENT_SCENE_DATA.gridType == 2){
-		hpps = vpps || window.CURRENT_SCENE_DATA.vpps;
-		window.CURRENT_SCENE_DATA.hpps = vpps || window.CURRENT_SCENE_DATA.vpps;
-	} else if (window.CURRENT_SCENE_DATA.gridType == 3){
-		vpps = hpps || window.CURRENT_SCENE_DATA.hpps;
-		window.CURRENT_SCENE_DATA.vpps = hpps || window.CURRENT_SCENE_DATA.hpps;
-	}
-	clear_grid();
-	gridContext.setLineDash(dash);
-	let startX = offsetX / window.CURRENT_SCENE_DATA.scale_factor || window.CURRENT_SCENE_DATA.offsetx / window.CURRENT_SCENE_DATA.scale_factor;
-	let startY = offsetY / window.CURRENT_SCENE_DATA.scale_factor || window.CURRENT_SCENE_DATA.offsety / window.CURRENT_SCENE_DATA.scale_factor;
-	startX = Math.round(startX)
-	startY = Math.round(startY) 
-	const hexSize = hpps/1.5 / window.CURRENT_SCENE_DATA.scale_factor || window.CURRENT_SCENE_DATA.hpps/1.5 / window.CURRENT_SCENE_DATA.scale_factor;
-	gridContext.lineWidth = lineWidth || window.CURRENT_SCENE_DATA.grid_line_width;
-	gridContext.strokeStyle = color || window.CURRENT_SCENE_DATA.grid_color;
 
-
-	const a = 2 * Math.PI / 6;
-			
-	
-
-
-	if(window.CURRENT_SCENE_DATA.gridType == 2){
-		
-		for (let x = startX-4*(hexSize * Math.sin(a)), j = 0; x + hexSize * Math.sin(a) < gridCanvas.width+4*hexSize+startX; x += 2 ** ((j + 1) % 2) * hexSize * Math.sin(a), j = 0){
-		   for (let y = startY-4*(hexSize * (1 + Math.cos(a))); y + hexSize * (1 + Math.cos(a)) < gridCanvas.height+4*hexSize+startY; y += hexSize * (1 + Math.cos(a)), x += (-1) ** j++ * hexSize * Math.sin(a)){		    
-		    drawHexagon(x, y);
-		  }
-		}	
-		
-			
-
-		let hexWidth = hexSize * Math.sin(a) * 2 * window.CURRENT_SCENE_DATA.scale_factor;
-		let hexHeight = hexSize * (1 + Math.cos(a)) * window.CURRENT_SCENE_DATA.scale_factor;
-		window.hexGridSize = {
-			width: hexWidth,
-			height: hexHeight
-		}
-	}
-	else{
-		
-		for (let y = startY-4*(hexSize * Math.sin(a)), j = 0; y + hexSize * Math.sin(a) < gridCanvas.height+startY+4*hexSize; y += 2 ** ((j + 1) % 2) * hexSize * Math.sin(a), j = 0){
-		   for (let x = startX-4*(hexSize * (1 + Math.cos(a))); x + hexSize * (1 + Math.cos(a)) < gridCanvas.width+startX+4*hexSize; x += hexSize * (1 + Math.cos(a)), y += (-1) ** j++ * hexSize * Math.sin(a)){
-		    drawHexagon(x, y);
-		  }
-		}
-		
-		let hexWidth = hexSize * (1 + Math.cos(a)) * window.CURRENT_SCENE_DATA.scale_factor;
-		let hexHeight = hexSize * Math.sin(a) * 2 * window.CURRENT_SCENE_DATA.scale_factor;
-		window.hexGridSize = {
-			width: hexWidth,
-			height: hexHeight
-		}
-	}
-
-	function drawHexagon(x, y) {
-		if(drawGrid == 1 || window.WIZARDING){
-			if(window.CURRENT_SCENE_DATA.gridType == 3){
-			  gridContext.beginPath();
-			  gridContext.moveTo(x + hexSize, y);
-			  for (let i = 1; i <= 6; i++) {
-			    let angle = i * Math.PI / 3;
-			    let dx = hexSize * Math.cos(angle);
-			    let dy = hexSize * Math.sin(angle);
-			    gridContext.lineTo(x + dx, y + dy);
-			  }
-			  gridContext.closePath();
-			  gridContext.stroke();
-			}
-			else{
-			  gridContext.beginPath();
-			  gridContext.moveTo(x, y + hexSize);
-			  for (let i = 1; i <= 6; i++) {
-			    let angle = i * Math.PI / 3;
-			    let dx = hexSize * Math.sin(angle);
-			    let dy = hexSize * Math.cos(angle);
-			    gridContext.lineTo(x + dx, y + dy);
-			  }
-			  gridContext.closePath();
-			  gridContext.stroke();
-			}
-		}
-		
-		window.gridCentersArray.push([x,y]);
-	}
-	$('#grid_overlay').css('transform', `scale(calc(var(--scene-scale) * ${window.CURRENT_SCENE_DATA.scaleAdjustment.x}), calc(var(--scene-scale) * ${window.CURRENT_SCENE_DATA.scaleAdjustment.y}))`)
-
-}
 function redraw_alphanum_grid(){
 
 	$('.alphaNumGrid').remove();
@@ -1191,11 +1108,7 @@ function redraw_alphanum_grid(){
 		}
 
 	} else if (window.CURRENT_SCENE_DATA.gridType == 2 || window.CURRENT_SCENE_DATA.gridType == 3){
-		const scaleX = window.CURRENT_SCENE_DATA.scaleAdjustment != undefined ? parseFloat(window.CURRENT_SCENE_DATA.scaleAdjustment.x) : 1;
-		const scaleY = window.CURRENT_SCENE_DATA.scaleAdjustment != undefined ? parseFloat(window.CURRENT_SCENE_DATA.scaleAdjustment.y) : 1;
-
-		hpps = window.hexGridSize.width * scaleX;
-		vpps = window.hexGridSize.height * scaleY;
+		const [hpps, vpps] = grid_size(false, false); //grid units
 		horizontalSvg.attr('height', vpps);
 		verticalSvg.attr('width', hpps);
 		horizontalSvg.attr('viewBox', `0 0 ${width * scale_factor} ${vpps}`);
@@ -1233,215 +1146,323 @@ function redraw_alphanum_grid(){
 
 	$('#VTT').append(horizontalSvg, verticalSvg);
 }
-function redraw_grid(hpps=null, vpps=null, offsetX=null, offsetY=null, color=null, lineWidth=null, subdivide=null, dash=[]){
-	if(window.CURRENT_SCENE_DATA.gridType && window.CURRENT_SCENE_DATA.gridType != 1){
-		let type = (window.CURRENT_SCENE_DATA.gridType == 2) ? false : true;
-		redraw_hex_grid(hpps, vpps, offsetX, offsetY, color, lineWidth, subdivide, dash, type)
-		return;
-	}
-	if(window.CURRENT_SCENE_DATA.grid != '1' && !window.WIZARDING){
-		return;
-	}
-	const gridCanvas = document.getElementById("grid_overlay");
-	gridCanvas.width = $('#scene_map').width();
-	gridCanvas.height = $('#scene_map').height();
-	const gridContext = gridCanvas.getContext("2d");
-	clear_grid();
-	gridContext.setLineDash(dash);
-	let startX = offsetX / window.CURRENT_SCENE_DATA.scale_factor || window.CURRENT_SCENE_DATA.offsetx / window.CURRENT_SCENE_DATA.scale_factor;
-	let startY = offsetY / window.CURRENT_SCENE_DATA.scale_factor || window.CURRENT_SCENE_DATA.offsety / window.CURRENT_SCENE_DATA.scale_factor;
-	startX = Math.round(startX)
-	startY = Math.round(startY) 
-	const incrementX = hpps / window.CURRENT_SCENE_DATA.scale_factor || window.CURRENT_SCENE_DATA.hpps / window.CURRENT_SCENE_DATA.scale_factor;
-	const incrementY = vpps / window.CURRENT_SCENE_DATA.scale_factor || window.CURRENT_SCENE_DATA.vpps / window.CURRENT_SCENE_DATA.scale_factor;
-	gridContext.lineWidth = lineWidth || window.CURRENT_SCENE_DATA.grid_line_width;
-	gridContext.strokeStyle = color || window.CURRENT_SCENE_DATA.grid_color;
-	let isSubdivided = subdivide === "1" || window.CURRENT_SCENE_DATA.grid_subdivided === "1"
-	let skip = true;
 
-	gridContext.beginPath();	
-	for (let i = startX; i < $("#grid_overlay").width(); i = i + incrementX) {
-		if (isSubdivided && skip) {
-			skip = false;
-			continue;
-		}
-		else {
-			skip = true;
-		}
-		gridContext.moveTo(i, 0);
-		gridContext.lineTo(i, $("#grid_overlay").height());
-	}
-	gridContext.stroke();
-	skip = true;
 
-	
-	gridContext.beginPath();
-	for (let i = startY; i < $("#grid_overlay").height(); i = i + incrementY) {
-		if (isSubdivided && skip) {
-			skip = false;
-			continue;
-		}
-		else {
-			skip = true;
-		}
-
-		gridContext.moveTo(0, i);
-		gridContext.lineTo($("#grid_overlay").width(), i);
-
-	}
-	gridContext.stroke();
-	$('#grid_overlay').css('transform', `scale(var(--scene-scale))`)
-
+const sr3 = Math.sqrt(3);
+const hexDeltas = [[sr3/2, 0.5],[-sr3/2, 0.5],[-sr3/2, -0.5],[sr3/2, -0.5],[0, 1],[0, -1]];	
+// type: 3 = flat-top, 2 = pointy top; size = long hex radius
+// adjx/y scaleAdjustment
+// uses transform to cubic coord system
+function closestHexCenter(type, size, x, y, offsetx, offsety, allowCenter_unused) {
+    x = (x - offsetx); //subtract out before transform - add back later
+    y = (y - offsety);
+    let q, r, retX, retY;
+    if(type === '3') {
+	    q = (2/3 * x) / size;
+	    r = (-1/3 * x + sr3/3 * y) / size;
+    } else {
+	    q = (sr3/3 * x - 1/3 * y) / size;
+	    r = (2/3 * y) / size;
+    }
+    const s = -q - r;
+    let rx = Math.round(q);
+    let ry = Math.round(r);
+    const rz = Math.round(s);
+    const x_diff = Math.abs(rx - q);
+    const y_diff = Math.abs(ry - r);
+    const z_diff = Math.abs(rz - s);
+    if (x_diff > y_diff && x_diff > z_diff) {
+        rx = -ry - rz;
+    } else if (y_diff > z_diff) {
+        ry = -rx - rz;
+    }
+    if(type === '3') {
+            retX = size * 3/2 * rx;
+            retY = size * sr3 * (rx/2 + ry);
+    } else {
+            retX = size * sr3 * (rx + ry/2);
+	    retY = size * 3/2 * ry;
+    }
+    return [retX + offsetx, retY + offsety]
 }
 
+// type: 3 = flat-top, 2 = pointy top; size = long hex radius
+function closestHexVertex(type, size, x, y, offsetx = 0, offsety = 0, allowCenter = false) {
+	//which vertex is closest (including center if allowed) - closest center - then vertex
+	const [cx, cy] = closestHexCenter(type, size, x, y, offsetx, offsety);
+	let dist = allowCenter ? ((x-cx)**2 + (y-cy)**2) : undefined;
+	return hexDeltas.reduce((prev,[dx,dy]) => {
+		//flip/flop x/y for rotated grid ( could optimize by quadrant, but not worth it )
+		const pt = type === '2' ? [cx+dx*size,cy+dy*size] : [cx+dy*size,cy+dx*size];
+		const newdist = (x-pt[0])**2 + (y-pt[1])**2;
+		if(dist === undefined || newdist < dist) {
+			dist = newdist;
+			return pt;
+		} else {
+			return prev;
+		}}, [cx, cy]);
+}
+
+function getCurrentClosestHex(x, y, vertex=false, allowCenter=false) {
+	const scene = window.CURRENT_SCENE_DATA;
+	const hexSize = scene.hpps / 1.5; // long radius; hpps = vpps by avtt convention
+	//subtle: adjust x before and after finding points
+	const adjx = scene.scaleAdjustment?.x || 1;
+	const adjy = scene.scaleAdjustment?.y || 1;
+	const ret = (vertex ? closestHexVertex : closestHexCenter) (scene.gridType, hexSize,
+								    x/adjx, y/adjy, scene.offsetx, scene.offsety,
+								    allowCenter);
+	return [ret[0]*adjx,ret[1]*adjy];
+}
+
+// make a tile grid suitable for a CSS background pattern
+function svg_tile(type = '1', xs = 100, ys = 100, color = 'black', lineWidth = 5, dash = []) {
+	if (type == '1')
+		lineWidth = lineWidth/2;
+	const strokeAttr = `fill="none" stroke="${color}" stroke-width="${lineWidth}" vector-effect="non-scaling-stroke" stroke-linecap="square" stroke-linejoin="bevel" ${dash ? 'stroke-dasharray="' + dash.join(',')+ '"': ''}`;
+	const svg = ((type == '1') ? // Rectangular Grid
+        `<svg xmlns="http://www.w3.org/2000/svg" width="${xs}" height="${ys}" overflow="visible">
+            <path d="M 0 0 L 0 ${ys} ${xs} ${ys} ${xs} 0 0 0" ${strokeAttr}/>
+        </svg>` 
+        : (type == '2') ? // (Pointy Top, Vertical Sides)
+			`<svg xmlns="http://www.w3.org/2000/svg" width="${xs}" height="${ys*1.5}" overflow="visible">
+            <path d="M ${xs} ${ys/4} L ${xs/2} 0 L 0 ${ys/4} L 0 ${ys*3/4} L ${xs/2} ${ys} L ${xs} ${ys*3/4} L ${xs} ${ys/4} M ${xs/2} ${ys} L ${xs/2} ${ys*1.5} Z" ${strokeAttr}/>
+        </svg>` 
+        : // (Flat Top, Pointy Sides)
+			`<svg xmlns="http://www.w3.org/2000/svg" width="${xs*1.5}" height="${ys}" overflow="visible">
+            <path d="M ${xs/4} ${ys} L 0 ${ys/2} L ${xs/4} 0 L ${xs*3/4} 0 L ${xs} ${ys/2} L ${xs*3/4} ${ys} L ${xs/4} ${ys} M ${xs} ${ys/2} L ${xs*1.5} ${ys/2} Z" ${strokeAttr}/>
+        </svg>`
+		).replace(/\s+/g, ' ').trim();
+    return "data:image/svg+xml;base64," + btoa(svg);
+}
+
+function draw_svg_grid(type=null, hpps=null, vpps=null, offsetX=null, offsetY=null, color=null, lineWidth=null, subdivide=null, dash=[]) {
+	const scene = window.CURRENT_SCENE_DATA;
+	const gridUnder = $('#grid_svg_underlay');
+	const gridOver = $('#grid_svg_overlay');	
+	if(type === "0") { //hack for clear grid
+		gridUnder.css('display', 'none');
+		$("#VTT").css('--grid-overlay-on', 'none');
+		return;
+	}
+	const gridType = scene.gridType;
+	const scale = scene.scale_factor
+	//pps for hex - hex radius is (pps / 1.5)
+	hpps = hpps || scene.hpps;
+	vpps = vpps || scene.vpps;	
+	const adjx = gridType == 1 ? 1 : (scene.scaleAdjustment?.x || 1);
+	const adjy = gridType == 1 ? 1 : (scene.scaleAdjustment?.y || 1);
+	let startX = (offsetX || scene.offsetx) * adjx / scale;
+	let startY = (offsetY || scene.offsety) * adjy / scale;
+	if(gridType == 2) {
+		scene.hpps = hpps = vpps;  //hpps and vpps need to be set correctly one the scene for most other things we can't remove this
+	} else if(gridType == 3) {
+		scene.vpps = vpps = hpps;
+	}
+	
+	const xs = hpps / ((gridType == 1) ? 1 : 0.75) * (gridType == 2 ? (sr3/2) : 1) * adjx / scale;
+	const ys = vpps / ((gridType == 1) ? 1 : 0.75) * (gridType == 3 ? (sr3/2) : 1) * adjy / scale;
+	let submult = 1;
+	if(gridType != 1) {
+		startX -= xs/2;
+		startY -= ys/2;
+	} else {
+		if(!subdivide) subdivide = scene.grid_subdivided;
+		if(subdivide && subdivide !== '0') submult = parseInt(window.CURRENT_SCENE_DATA.fpsq) / 5; // we divide into 5 ft squares
+	}
+	let strokeWidth = lineWidth || scene.grid_line_width;
+	strokeWidth = Math.max(strokeWidth / window.ZOOM / scale, strokeWidth); // fix disappearing lines on zoom due rendering pixel averages
+	const gridImage = svg_tile(gridType, xs*submult, ys*submult,
+			    color || scene.grid_color,
+		        strokeWidth, dash);
+
+	const tilex = gridType == 3 ? 1.5 : 1;
+	const tiley = gridType == 2 ? 1.5 : 1; //adjust for next row/col extra hex fill line
+
+	const bk = {
+		'background-image': "url(" + gridImage +")",
+		'background-size': `${xs * tilex}px ${ys * tiley}px`,
+		'background-position-x': startX,
+		'background-position-y': startY
+	}
+	gridOver.css(bk);
+	gridUnder.css(bk);
+	grid_overlay_update(scene.grid, scene.gridOver);
+}
+
+function grid_overlay_update(grid, gridOver) {
+	//grid renders into 2 elements (below darkness&fog and above)
+	// .grid - global visibility control
+	// .gridOver - grid overlay control:
+	// 0=under darkness/fog grid 1=over darkness/fog grid 
+	$('#grid_svg_underlay').css('display', (grid != '0' && gridOver == 0) ? 'block' : 'none');
+	$("#VTT").css('--grid-overlay-on', grid != '0' && gridOver == 1 ? 'block' : 'none');
+}
+
+//returns current [width,height] of grid (including hex)
+function grid_size(scaled = false, adjusted = false) {
+	const scene = window.CURRENT_SCENE_DATA;
+	const hexadj_constant = sr3 / 1.5; //1.155...
+	const xhex = (scene.gridType == 2) ? hexadj_constant : 1;
+	const yhex = (scene.gridType == 3) ? hexadj_constant : 1;
+	const scale = scaled ? scene.scale_factor : 1;
+	const adjx = ((adjusted ? scene.scaleAdjustment?.x : 1) || 1) / scale * xhex;
+	const adjy = ((adjusted ? scene.scaleAdjustment?.y : 1) || 1) / scale * yhex;
+	return [scene.hpps * adjx, scene.vpps * adjy];
+}
+
+function redraw_grid(hpps=null, vpps=null, offsetX=null, offsetY=null, color=null, lineWidth=null, subdivide=null, dash=[]){
+	hide_wizarding_box();
+	clear_grid();
+	draw_svg_grid(null, hpps, vpps, offsetX, offsetY, color, lineWidth, subdivide, dash);	
+}
+
+function draw_select_box(x0, y0, w, h, inside=false, selbox=false, group=false, aoeRotate=false) {
+	const sf = window.CURRENT_SCENE_DATA.scale_factor || 1.0;
+	$("#VTT").css({'--selbox-x': `${x0}`,
+		       '--selbox-y': `${y0}`,
+		       '--selbox-w': `${w}`,
+		       '--selbox-h': `${h}`});
+	
+	const rg1 = document.getElementById('rot-grab');
+	const rg2 = document.getElementById('group-rot-grab');
+	const transform = `translate(${x0 / sf}, ${y0 / sf}) scale(${w / sf}, ${h / sf})`;
+	
+	// ++
+	// Check later: bug on some browser but not others?
+	// would like to apply to enclosing <g> but is "blurry" for some reason:
+	// document.getElementById('dragbox-region').setAttribute('transform', transform);
+	// However applying to individual paths works:
+	document.getElementById('dragbox-rect1').setAttribute('transform',transform);
+	document.getElementById('dragbox-rect2').setAttribute('transform',transform);
+	document.getElementById('selbox-rect').setAttribute('transform',transform);	
+	
+	// --
+
+	document.getElementById('dragbox-rect')?.setAttribute('visibility', !selbox ? 'visible' : 'hidden');
+	document.getElementById('selbox-rect')?.setAttribute('visibility', selbox ? 'visible' : 'hidden');
+	//$("#dragbox").css("mix-blend-mode", selbox ? "" : "difference"); //helps with visibility
+	if(selbox) {
+		if(group || aoeRotate) {
+			const aoeSvg = document.getElementById('aoeRotateSvg');
+			const regSvg = document.getElementById('groupRotateSvg');
+			rg2.setAttribute('transform', `translate(${(x0+w) / sf}, ${y0 / sf})`);
+			rg2.setAttribute('visibility','visible');
+			aoeSvg.setAttribute('visibility', aoeRotate ? 'visible' : 'hidden');
+			regSvg.setAttribute('visibility', !aoeRotate ? 'visible' : 'hidden');
+		} else {
+			rg2.setAttribute('visibility','hidden');
+		}
+		rg1.setAttribute('transform', `translate(${(x0+w/2) / sf}, ${y0 / sf})`);
+		rg1.setAttribute('visibility','visible');			    
+	} else {
+		rg1.setAttribute('visibility','hidden');
+	}
+}
+function hide_select_box() {
+	document.getElementById('dragbox-rect')?.setAttribute('visibility', 'hidden');
+	document.getElementById('selbox-rect')?.setAttribute('visibility', 'hidden');
+	document.getElementById('rot-grab')?.setAttribute('visibility', 'hidden');
+	document.getElementById('group-rot-grab')?.setAttribute('visibility', 'hidden');
+	document.getElementById('aoeRotateSvg')?.setAttribute('visibility', 'hidden');
+	document.getElementById('groupRotateSvg')?.setAttribute('visibility', 'hidden');
+}
+		
+function hide_wizarding_box() {
+	const grid = document.getElementById('wizbox-grid');
+	const hex = document.getElementById('wizbox-hex');	
+	if(grid) grid.setAttribute('visibility', 'hidden');
+	if(hex) hex.setAttribute('visibility', 'hidden');
+}
 function draw_wizarding_box() {
-
-	let gridCanvas = document.getElementById("grid_overlay");
-	let gridContext = gridCanvas.getContext("2d");
-	gridCanvas.width = $("#scene_map").width();
-	gridCanvas.height = $("#scene_map").height();
-
-	startX = Math.round(window.CURRENT_SCENE_DATA.offsetx);
-	startY = Math.round(window.CURRENT_SCENE_DATA.offsety);
-
+	const scene = window.CURRENT_SCENE_DATA;
+	const svg = document.getElementById("wizbox");
+	if(!svg) return;
 	let al1 = {
-		x: (parseInt($("#aligner1").css("left")) + 29)/window.CURRENT_SCENE_DATA.scale_factor,
-		y: (parseInt($("#aligner1").css("top")) + 29)/window.CURRENT_SCENE_DATA.scale_factor,
+		x: (parseInt($("#aligner1").css("left")) + 29)/scene.scale_factor,
+		y: (parseInt($("#aligner1").css("top")) + 29)/scene.scale_factor,
 	};
 
 	let al2 = {
-		x: (parseInt($("#aligner2").css("left")) + 29)/window.CURRENT_SCENE_DATA.scale_factor,
-		y: (parseInt($("#aligner2").css("top")) + 29)/window.CURRENT_SCENE_DATA.scale_factor,
+		x: (parseInt($("#aligner2").css("left")) + 29)/scene.scale_factor,
+		y: (parseInt($("#aligner2").css("top")) + 29)/scene.scale_factor,
 	};
-	gridContext.setLineDash([30, 5]);
-
-	gridContext.lineWidth = 2;
-	gridContext.strokeStyle = "green";
-
+	const grid = document.getElementById('wizbox-grid');
+	const hex = document.getElementById('wizbox-hex');	
 	if($('#gridType input:checked').val() == 1){
-		gridContext.beginPath();
-		gridContext.moveTo(al1.x, al1.y);
-		gridContext.lineTo(al2.x, al1.y);
-		gridContext.moveTo(al2.x, al1.y);
-		gridContext.lineTo(al2.x, al2.y);
-		gridContext.moveTo(al2.x, al2.y);
-		gridContext.lineTo(al1.x, al2.y);
-		gridContext.moveTo(al1.x, al2.y);
-		gridContext.lineTo(al1.x, al1.y);
-	
-		let hpps = (al2.x - al1.x)/3
-		let vpps = (al2.y - al1.y)/3
-	
-		gridContext.moveTo(al1.x, al1.y + vpps);
-		gridContext.lineTo(al2.x, al1.y + vpps);
-		gridContext.moveTo(al1.x, al1.y + vpps*2);
-		gridContext.lineTo(al2.x, al1.y + vpps*2);
-		gridContext.moveTo(al1.x + hpps, al1.y);
-		gridContext.lineTo(al1.x + hpps, al2.y);
-		gridContext.moveTo(al1.x + hpps*2, al1.y);
-		gridContext.lineTo(al1.x + hpps*2, al2.y);
-	
-		gridContext.stroke();
+		hex.setAttribute('visibility', 'hidden');
+		const width = al2.x - al1.x;
+		const height = al2.y - al1.y;
+		grid.setAttribute('transform', `translate(${al1.x}, ${al1.y}) scale(${width}, ${height})`);
+		grid.setAttribute('visibility', 'visible');
+	} else {
+		const hexedge = Math.abs(al2.y - al1.y) / 3;
+		const rotate = $('#gridType input:checked').val() == 3 ? 90 : 0;
+		const adjx = scene.scaleAdjustment?.x || 1.0;
+		const adjy = scene.scaleAdjustment?.y || 1.0;
+		//todo deal with translate for adjx/adjy
+		grid.setAttribute('visibility', 'hidden');
+		hex.setAttribute('transform', `translate(${al1.x * adjx}, ${al1.y * adjy}) scale(${hexedge*adjx}, ${hexedge*adjy}) rotate(${rotate})`);
+		hex.setAttribute('visibility', 'visible');
 	}
-	else{
-		drawHexagon(al1.x, al1.y);
-		let hexSize = (al2.x - al1.x)/1.5/2;
-		const a = 2 * Math.PI / 6;
-		if($('#gridType input:checked').val() == 3){			
-				drawHexagon(al1.x, al1.y + hexSize* Math.sin(a)*2);
-				drawHexagon(al1.x, al1.y - hexSize * Math.sin(a)*2);
-				drawHexagon(al1.x+hexSize * (1 + Math.cos(a)), al1.y+hexSize * Math.sin(a));
-				drawHexagon(al1.x-hexSize * (1 + Math.cos(a)), al1.y+hexSize * Math.sin(a));
-				drawHexagon(al1.x+hexSize * (1 + Math.cos(a)), al1.y-hexSize * Math.sin(a));
-				drawHexagon(al1.x-hexSize * (1 + Math.cos(a)), al1.y-hexSize * Math.sin(a));
-		}
-		if($('#gridType input:checked').val() == 2){				
-				drawHexagon(al1.x + hexSize * Math.sin(a)*2, al1.y);
-				drawHexagon(al1.x - hexSize * Math.sin(a)*2, al1.y);
-				drawHexagon(al1.x+hexSize * Math.sin(a), al1.y+hexSize * (1 + Math.cos(a)));
-				drawHexagon(al1.x+hexSize * Math.sin(a), al1.y-hexSize * (1 + Math.cos(a)));
-				drawHexagon(al1.x-hexSize * Math.sin(a), al1.y+hexSize * (1 + Math.cos(a)));
-				drawHexagon(al1.x-hexSize * Math.sin(a), al1.y-hexSize * (1 + Math.cos(a)));
-		}
-	}
-
-
-	function drawHexagon(x, y) {
-		let hexSize = (al2.x - al1.x)/2/1.5 / window.CURRENT_SCENE_DATA.scale_factor;
-		if(window.CURRENT_SCENE_DATA.gridType == 3){
-		  gridContext.beginPath();
-		  gridContext.moveTo(x + hexSize, y);
-		  for (let i = 1; i <= 6; i++) {
-		    let angle = i * Math.PI / 3;
-		    let dx = hexSize * Math.cos(angle);
-		    let dy = hexSize * Math.sin(angle);
-		    gridContext.lineTo(x + dx, y + dy);
-		  }
-		  gridContext.closePath();
-		  gridContext.stroke();
-		}
-		else{
-		  gridContext.beginPath();
-		  gridContext.moveTo(x, y + hexSize);
-		  for (let i = 1; i <= 6; i++) {
-		    let angle = i * Math.PI / 3;
-		    let dx = hexSize * Math.sin(angle);
-		    let dy = hexSize * Math.cos(angle);
-		    gridContext.lineTo(x + dx, y + dy);
-		  }
-		  gridContext.closePath();
-		  gridContext.stroke();
-		}
-	}
-
 }
-function ctxScale(canvasid, doNotScale=false){
+
+function ctxScale(canvasid,  w, h, doNotScale=false){
 	let canvas = document.getElementById(canvasid);
-	canvas.width = $("#scene_map").width();
-  	canvas.height = $("#scene_map").height();
+	canvas.width = w;
+  	canvas.height = h;
   	if (!doNotScale) {
 		$(canvas).css({
 			'transform-origin': 'top left',
 			'transform': 'scale(var(--scene-scale))'
 		});
 	}
+	return canvas;
 }
 
 function reset_canvas(apply_zoom=true) {
-	let sceneMapWidth = $("#scene_map").width();
-	let sceneMapHeight = $("#scene_map").height();
+	const sceneMapWidth = $("#scene_map").width();
+	const sceneMapHeight = $("#scene_map").height();
+
+	if (!sceneMapWidth || !sceneMapHeight) {
+		showErrorMessage("Error loading scene.", `<p>Possible issues:</p>• The scene map link may be blank<br>• If using a video map ensure the "video map" toggle is enabled<br>• The file may not be publicly accessible (check share settings on host)<br>• The host may have rate limits on file access`);
+		set_default_vttwrapper_size();
+		$('#loadingStyles').remove();
+		$('.import-loading-indicator').remove();
+		remove_loading_overlay();
+		delete window.LOADING;
+		return false;
+	}
 
 	$('#darkness_layer').css({"width": sceneMapWidth, "height": sceneMapHeight});
 	$("#scene_map_container").css({"width": sceneMapWidth, "height": sceneMapHeight});
-	
-	ctxScale('peer_overlay');
-	ctxScale('temp_overlay');
-	ctxScale('draw_overlay_under_fog_darkness', true);
-	ctxScale('fog_overlay');
-	ctxScale('grid_overlay');	
-	ctxScale('draw_overlay');
-	ctxScale('walls_layer');
-	ctxScale('elev_overlay');
-
+	// grid overlay css tiling needs a container to fill that matches map
+	$("#grid_svg_overlay_container").css({"width": sceneMapWidth, "height": sceneMapHeight});
+	$("#dragbox").css({"width": sceneMapWidth, "height": sceneMapHeight});	
+	ctxScale('peer_overlay', sceneMapWidth, sceneMapHeight);
+	ctxScale('temp_overlay', sceneMapWidth, sceneMapHeight);
+	ctxScale('draw_overlay_under_fog_darkness', sceneMapWidth, sceneMapHeight, true);
+	ctxScale('fog_overlay', sceneMapWidth, sceneMapHeight);
+	ctxScale('draw_overlay', sceneMapWidth, sceneMapHeight);
+	ctxScale('walls_layer', sceneMapWidth, sceneMapHeight);
+	ctxScale('elev_overlay', sceneMapWidth, sceneMapHeight);
 
 	window.WeatherOverlay?.setSize(sceneMapWidth, sceneMapHeight);
 
 	let canvas = document.getElementById('raycastingCanvas');
-	canvas.width = $("#scene_map").width();
-  	canvas.height = $("#scene_map").height();
+	canvas.width = sceneMapWidth;
+  	canvas.height = sceneMapHeight;
 
   	canvas = document.getElementById('light_overlay');
-	canvas.width = $("#scene_map").width();
-  	canvas.height = $("#scene_map").height();
+	canvas.width = sceneMapWidth;
+  	canvas.height = sceneMapHeight;
 
 	$("#text_div").css({"width": sceneMapWidth * window.CURRENT_SCENE_DATA.scale_factor,  "height": sceneMapHeight * window.CURRENT_SCENE_DATA.scale_factor});
 
-	canvas = document.getElementById("fog_overlay");
-	let ctx = canvas.getContext("2d");
-
 	if (!window.FOG_OF_WAR) {
-		ctx.clearRect(0, 0, canvas.width, canvas.height);
-		return;
+		const canvas = document.getElementById("fog_overlay");
+		canvas.getContext("2d").clearRect(0, 0, canvas.width, canvas.height);
+		return true;
 	}
 
 	setVisionLightOffscreenCanvas(); //adding this here as it was previously being done every fill causing webgl issues
@@ -1454,28 +1475,11 @@ function reset_canvas(apply_zoom=true) {
 	set_weather_size(sceneMapWidth, sceneMapHeight);
 
 
- 	delete window.lightAuraClipPolygon;
- 	delete window.lineOfSightPolygons;
-
-
-	
-	
-
-	let canvas_grid = document.getElementById("grid_overlay");
-	let ctx_grid = canvas_grid.getContext("2d");
-
 	window.temp_canvas = document.getElementById("temp_overlay");;
 	window.temp_context = window.temp_canvas.getContext("2d");
 	if (window.CURRENT_SCENE_DATA && window.CURRENT_SCENE_DATA.hpps > 10 && window.CURRENT_SCENE_DATA.vpps > 10) {
 		//alert(window.CURRENT_SCENE_DATA.hpps + " "+ window.CURRENT_SCENE_DATA.vpps);
-		if(window.WIZARDING){
-			$("#VTT").css("--scene-scale", 1)
-		}
-		else{
-			$("#VTT").css("--scene-scale", window.CURRENT_SCENE_DATA.scale_factor);		
-		}
-		canvas_grid.width = $("#scene_map").width();
-		canvas_grid.height = $("#scene_map").height();
+		$("#VTT").css("--scene-scale", window.WIZARDING ? 1 : window.CURRENT_SCENE_DATA.scale_factor);
 
 		startX = Math.round(window.CURRENT_SCENE_DATA.offsetx);
 		startY = Math.round(window.CURRENT_SCENE_DATA.offsety);
@@ -1483,22 +1487,19 @@ function reset_canvas(apply_zoom=true) {
 		//alert(startX+ " "+startY);
 		if (window.WIZARDING) {
 			draw_wizarding_box();
-		}
-		//alert('inizio 1');
-
-		if (!window.WIZARDING) {
+		} else {
 			redraw_grid();
 			redraw_alphanum_grid();
 		}
 		//alert('sopravvissuto');
 	}
 	else {
-		ctx_grid.clearRect(0, 0, canvas_grid.width, canvas_grid.height);
+		clear_grid();
 	}
 	if(apply_zoom)
 		apply_zoom_from_storage();
 	redraw_text();
-	return;
+	return true;
 }
 function check_darkness_value(){
 	
@@ -1558,9 +1559,9 @@ function check_darkness_value(){
   			$('#VTT').css('--darkness-filter', darknessPercent + "%");
   		   	if(window.DM){
   		   		$("#light_container [id^='light_']").css('visibility', "visible");
-  		   		$(`.token`).show();
+				$(`.token`).toggleClass('notVisible', false);
   				$(`.door-button`).css('visibility', '');
-  				$(`.aura-element`).show();
+				$(`.aura-element`).toggleClass('notVisible', false);
   		   	}
 	  		if(!parseInt(window.CURRENT_SCENE_DATA.darkness_filter) && window.walls?.length>4){
 			 	lightContainer.css({'opacity': '0.3'});
@@ -1633,37 +1634,6 @@ function redraw_fog() {
 	ctx.fillStyle = fogStyle;
 	ctx.fillRect(0, 0, canvas.width, canvas.height);
 
-	function drawHexagon(ctx, x, y) {
-		const hpps = window.CURRENT_SCENE_DATA.gridType == 2 ? window.CURRENT_SCENE_DATA.vpps : window.CURRENT_SCENE_DATA.hpps;
-
-		const hexSize = hpps/1.5 / window.CURRENT_SCENE_DATA.scale_factor || window.CURRENT_SCENE_DATA.hpps/1.5 / window.CURRENT_SCENE_DATA.scale_factor;
-
-		if(window.CURRENT_SCENE_DATA.gridType == 3){
-		  ctx.beginPath();
-		  ctx.moveTo(x + hexSize, y);
-		  for (let i = 1; i <= 6; i++) {
-		    let angle = i * Math.PI / 3;
-		    let dx = hexSize * Math.cos(angle);
-		    let dy = hexSize * Math.sin(angle);
-		    ctx.lineTo(x + dx, y + dy);
-		  }
-		  ctx.closePath();
-		  ctx.fill();
-		}
-		else{
-		  ctx.beginPath();
-		  ctx.moveTo(x, y + hexSize);
-		  for (let i = 1; i <= 6; i++) {
-		    let angle = i * Math.PI / 3;
-		    let dx = hexSize * Math.sin(angle);
-		    let dy = hexSize * Math.cos(angle);
-		    ctx.lineTo(x + dx, y + dy);
-		  }
-		  ctx.closePath();
-		  ctx.fill();
-		}
-	}
-
 	for (let i = 0; i < window.REVEALED.length; i++) {
 		let d = window.REVEALED[i];
 		let adjustedArray = [];
@@ -1726,7 +1696,7 @@ function redraw_fog() {
 	 				for(let i=0; i<d[0].length; i++){
 	 					drawHexagon(ctx, d[0][i][0], d[0][i][1])
 	 				}
-	 				ctx.setTransform(1, 0, 0, 1, 0, 0);
+					ctx.setTransform(1, 0, 0, 1, 0, 0);
 	 			}
 			
 
@@ -1781,12 +1751,12 @@ function redraw_fog() {
  				}
 				else{
 					ctx.globalCompositeOperation = 'destination-out';
-					ctx.scale(window.CURRENT_SCENE_DATA.scaleAdjustment.x, window.CURRENT_SCENE_DATA.scaleAdjustment.y)
 	 				ctx.fillStyle = "#000000";
+					ctx.scale(window.CURRENT_SCENE_DATA.scaleAdjustment.x, window.CURRENT_SCENE_DATA.scaleAdjustment.y)
 	 				for(let i=0; i<d[0].length; i++){
 	 					drawHexagon(ctx, d[0][i][0], d[0][i][1])
 	 				}
-	 				ctx.setTransform(1, 0, 0, 1, 0, 0);
+					ctx.setTransform(1, 0, 0, 1, 0, 0);
 	 			}				
 
 				ctx.globalCompositeOperation = 'source-over';
@@ -1802,7 +1772,7 @@ function redraw_fog() {
 	 				for(let i=0; i<d[0].length; i++){
 	 					drawHexagon(ctx, d[0][i][0], d[0][i][1])
 	 				}
-	 				ctx.setTransform(1, 0, 0, 1, 0, 0);
+					ctx.setTransform(1, 0, 0, 1, 0, 0);
 	 			}
 			}
 		}
@@ -1842,10 +1812,17 @@ function redraw_text() {
 function redraw_drawings() {
 
 	let canvasAboveFog = document.getElementById("draw_overlay");
+	let canvasBelowFog = document.getElementById("draw_overlay_under_fog_darkness");
+
+	if (!canvasAboveFog?.width || !canvasBelowFog?.width || !canvasAboveFog?.height || !canvasBelowFog?.height) {
+		const mapLink = window.DM && window.CURRENT_SCENE_DATA?.dm_map_usable ? window.CURRENT_SCENE_DATA.dm_map : window.CURRENT_SCENE_DATA?.player_map
+		console.warn('Attempted draw without scene being loaded or missing image', mapLink)
+		return;
+	}
+
 	let ctxAboveFog = canvasAboveFog.getContext("2d");
 	ctxAboveFog.clearRect(0, 0, canvasAboveFog.width, canvasAboveFog.height);
 
-	let canvasBelowFog = document.getElementById("draw_overlay_under_fog_darkness");
 	let ctxBelowFog = canvasBelowFog.getContext("2d");
 	ctxBelowFog.clearRect(0, 0, canvasBelowFog.width, canvasBelowFog.height);
 
@@ -1905,6 +1882,7 @@ function redraw_drawings() {
 			targetCtx.save();
 			targetCtx.filter = `blur(${lineBlur}px)`;
 		}
+		
 		if (shape == "eraser") {
 			if (lineBlur != undefined) {
 				targetCtx.globalCompositeOperation = 'destination-out';
@@ -1914,34 +1892,37 @@ function redraw_drawings() {
 				targetCtx.clearRect(x / window.CURRENT_SCENE_DATA.scale_factor, y / window.CURRENT_SCENE_DATA.scale_factor, width / window.CURRENT_SCENE_DATA.scale_factor, height / window.CURRENT_SCENE_DATA.scale_factor);
 			}
 		}
-		if (shape == "rect") {
+		else if (shape == "rect") {
 			drawRect(targetCtx,x, y, width, height, color, isFilled, lineWidth);
 		}
-		if (shape == "arc") {
+		else if (shape == "arc") {
 			const radius = width
 			drawCircle(targetCtx,x, y, radius, color, isFilled, lineWidth);
 		}
-		if (shape == "cone") {
+		else if (shape == "cone") {
 			drawCone(targetCtx, x, y, width, height, color, isFilled, lineWidth);
 		}
-		if (shape == "line") {
+		else if (shape == "line") {
 			drawLine(targetCtx,x, y, width, height, color, lineWidth, scale);		
 		}
-		if (shape == "polygon") {
+		else if (shape == "polygon") {
 			drawPolygon(targetCtx,x, color, isFilled, lineWidth, undefined, undefined, scale);
 			// ctx.stroke();
 		}
-		if (shape == "brush") {
+		else if (shape == "brush") {
 			drawBrushstroke(targetCtx, x, color, lineWidth, scale);
 		}
-		if(shape == 'brush-arrow'){
+		else if(shape == 'brush-arrow'){
 			drawBrushArrow(targetCtx, x, color, lineWidth, scale, fill);
 		}
-		if(shape == "paint-bucket"){
+		else if(shape == "paint-bucket"){
 			bucketFill(targetCtx, x/window.CURRENT_SCENE_DATA.scale_factor, y/window.CURRENT_SCENE_DATA.scale_factor, color, 1, true, undefined, undefined, lineBlur);
 		}
-		if(shape == "3pointRect"){
+		else if(shape == "3pointRect"){
 		 	draw3PointRect(targetCtx, x, color, isFilled, lineWidth, undefined, undefined, scale);	
+		}
+		else if(shape == "3pointRound"){
+		 	draw3PointRound(targetCtx, x, color, lineWidth, undefined, undefined, scale);	
 		}
 		if (lineBlur != undefined) {
 			targetCtx.restore();
@@ -1949,7 +1930,6 @@ function redraw_drawings() {
 	}
 
 	ctxAboveFog.drawImage(offscreenDrawAboveFog, 0, 0); // draw to visible canvas only once so we render this once
-
 	ctxBelowFog.drawImage(offscreenDrawBelowFog, 0, 0); // draw to visible canvas only once so we render this once
 	
 }
@@ -2091,6 +2071,10 @@ function check_token_elev(tokenid, elevContext=undefined){
 
 function redraw_drawn_light(darknessMoved = false){
 	let lightCanvas = document.getElementById("light_overlay");
+	if (!lightCanvas?.width || !lightCanvas?.height) {
+		console.warn('Attempted light draw without scene being loaded or missing image');
+		return;
+	}
 	let lightCtx = lightCanvas.getContext("2d");
 	lightCtx.clearRect(0, 0, lightCanvas.width, lightCanvas.height);
 	const drawings = window.DRAWINGS.filter(d => d[1] == "light")
@@ -2139,30 +2123,30 @@ function redraw_drawn_light(darknessMoved = false){
 				offscreenContext.clearRect(x / window.CURRENT_SCENE_DATA.scale_factor, y / window.CURRENT_SCENE_DATA.scale_factor, width / window.CURRENT_SCENE_DATA.scale_factor, height / window.CURRENT_SCENE_DATA.scale_factor);
 			}	
 		}
-		if (shape == "rect") {
+		else if (shape == "rect") {
 			drawRect(offscreenContext,x, y, width, height, color, isFilled, lineWidth);
 		}
-		if (shape == "arc") {
+		else if (shape == "arc") {
 			const radius = width
 			drawCircle(offscreenContext,x, y, radius, color, isFilled, lineWidth);
 		}
-		if (shape == "cone") {
+		else if (shape == "cone") {
 			drawCone(offscreenContext, x, y, width, height, color, isFilled, lineWidth);
 		}
-		if (shape == "line") {
+		else if (shape == "line") {
 			drawLine(offscreenContext,x, y, width, height, color, lineWidth, scale);		
 		}
-		if (shape == "polygon") {
+		else if (shape == "polygon") {
 			drawPolygon(offscreenContext,x, color, isFilled, lineWidth, undefined, undefined, scale);
 			// ctx.stroke();
 		}
-		if (shape == "brush") {
+		else if (shape == "brush") {
 			drawBrushstroke(offscreenContext, x, color, lineWidth, scale);
 		}
-		if(shape == "paint-bucket"){
+		else if(shape == "paint-bucket"){
 			bucketFill(offscreenContext, x / window.CURRENT_SCENE_DATA.scale_factor, y / window.CURRENT_SCENE_DATA.scale_factor, color, 1, true, width, height, lineBlur, darknessMoved);
 		}
-		if(shape == "3pointRect"){
+		else if(shape == "3pointRect"){
 		 	draw3PointRect(offscreenContext, x, color, isFilled, lineWidth, undefined, undefined, scale);	
 		}
 		if (lineBlur != undefined) {
@@ -2196,7 +2180,28 @@ function setVisionLightOffscreenCanvas(){
 	create_or_set_offscreen_canvas('devilsightCanvas'); //devilsight canvas is used to combine with darkness aoe (or other magical darkness sources if implemented)
 	create_or_set_offscreen_canvas('truesightCanvas'); //this is stored and checked against in vision checks for invisible creatures (also works like devilsight for magical darkness)
 }
-function redraw_light_walls(clear=true, editingWallPoints = false){
+/*
+Clears and redraws all walls from window.DRAWINGS, also redraws wall heights if present.
+Rebuilds window.walls with Boundary objects for all walls.
+Places or adjusts door buttons with their current state.
+This stores line of sight data for 'point LoS' drawing tools, in draw, elev, light, fog menus.
+
+Options
+	clear: if true clears the canvas that shows the walls to the DM.
+			Used to force clearing this canvas when displayWalls is not expected to be true.
+			Most of the time we will want to clear this as we are immediately redrawing to that canvas. 
+			It also means less data stored in memory when not displaying walls as a cleared canvas is less memory then one with drawings on it
+	editingWallPoints: if true we have edit points selected, do reduced checks while we move/scale walls to prevent lag while editing.
+	wallsChanged: if true, force clearing the window.lightDrawingLosCache which stores line of sight data for 'point LoS' drawing tools, in draw, elev, light, fog menus. 
+					this is cleared on scene load already so this is only used when editing walls.
+*/
+function redraw_light_walls(options = {clearCanvas: true, editingWallPoints: false, wallsChanged: false}){
+	const {clearCanvas, editingWallPoints, wallsChanged} = {clearCanvas: true, editingWallPoints: false, wallsChanged: false, ...options};
+	if (wallsChanged){
+		window.lightDrawingLosCache = {};
+		window.lightAuraClipPolygon = {};
+		window.lineOfSightPolygons = {};
+	} 
 	let showWallsToggle = $('#show_walls').hasClass('button-enabled');
 	let canvas = document.getElementById("walls_layer");	
 
@@ -2212,7 +2217,7 @@ function redraw_light_walls(clear=true, editingWallPoints = false){
 	}
 	const { sceneWidth, sceneHeight } = getSceneMapSize();
 
-	if(displayWalls == true || clear)
+	if(displayWalls == true || clearCanvas)
 		ctx.clearRect(0, 0, canvas.width, canvas.height);
 
 
@@ -2260,7 +2265,7 @@ function redraw_light_walls(clear=true, editingWallPoints = false){
 
 		scale = (scale == undefined) ?  currentSceneScale/currentSceneConversion : scale/currentSceneConversion;
 		let adjustedScale = scale/currentSceneScale;
-		lineWidth = Math.min(lineWidth, Math.max(lineWidth/window.ZOOM/scale, 1));
+		lineWidth = Math.min(lineWidth, Math.max(lineWidth/window.ZOOM/currentSceneScale, 1));
 		if (displayWalls) {
 				
 			if(!editingWallPoints && ((wallBottom != undefined && wallBottom != '') || (wallTop != undefined && wallTop != ''))){
@@ -2370,13 +2375,8 @@ function redraw_light_walls(clear=true, editingWallPoints = false){
 							}
 							else if(tokenObject?.options?.teleporterCoords != undefined){
 
-							
-								for(let i=0; i<window.CURRENTLY_SELECTED_TOKENS.length; i++){
-
-									let curr = window.TOKEN_OBJECTS[window.CURRENTLY_SELECTED_TOKENS[i]];
-									if(!window.DM && (curr.options.restrictPlayerMove || curr.options.locked) && !curr.isCurrentPlayer() && curr.options.groupId == undefined){
-										continue;
-									}
+								forSelTokens((curr) => {
+									if(!window.DM && (curr.options.restrictPlayerMove || curr.options.locked) && !curr.isCurrentPlayer() && curr.options.groupId == undefined) return
 										
 									const scaleCoversion = window.CURRENT_SCENE_DATA.scale_factor != undefined ? window.CURRENT_SCENE_DATA.scale_factor / tokenObject.options.teleporterCoords.scale : 1 / tokenObject.options.teleporterCoords.scale;
 									curr.options.left = `${tokenObject.options.teleporterCoords.left*scaleCoversion - curr.options.size/2}px`;
@@ -2397,8 +2397,7 @@ function redraw_light_walls(clear=true, editingWallPoints = false){
 										curr.highlight();
 									}
 									curr.sync(optionsClone);
-								
-								}
+								})
 							}
 							return;
 						}
@@ -2432,7 +2431,7 @@ function redraw_light_walls(clear=true, editingWallPoints = false){
 										(doors[0][11] != undefined ? doors[0][11] : "")
 							];	
 							window.DRAWINGS.push(data);
-							window.wallUndo.push({
+							pushWallUndo({
 								undo: [[...data]],
 								redo: [[...doors[0]]]
 							})
@@ -2827,6 +2826,14 @@ function door_note_icon(id){
 								left: flyoutLeft,
 								width: '400px'
 							})
+							let flyoutTop = e.clientY;
+							let flyoutHeight = flyout.height() + 25;
+							let bottom = (e.clientY + flyoutHeight);
+
+							if (bottom > window.innerHeight) {
+								flyoutTop = flyoutTop - (bottom - window.innerHeight) - 25;
+							}
+							flyout.css('top', flyoutTop);
 
 							const buttonFooter = $("<div></div>");
 							buttonFooter.css({
@@ -2889,14 +2896,17 @@ function open_close_door(x1, y1, x2, y2, type=0){
 				 (doors[0][11] != undefined ? doors[0][11] : "")
 				];	
 	window.DRAWINGS.push(data);
-	window.wallUndo.push({
+	pushWallUndo({
 		undo: [[...data]],
 		redo: [[...doors[0]]]
 	})
-	redraw_light_walls();
-	redraw_drawn_light();
+	redraw_light_walls({wallsChanged: true});
+	redraw_drawn_light(); // could limit this to point line of sight tool drawings
+	redraw_drawings(); // could limit this to point line of sight tool drawings
+	redraw_fog(); // could limit this to point line of sight tool drawings
+	redraw_elev(); // could limit this to point line of sight tool drawings
 	debounceLightChecks();
-	sync_drawings();						
+	sync_drawings({wallsChanged: true});						
 }
 
 function stop_drawing() {
@@ -2912,6 +2922,8 @@ function stop_drawing() {
 	window.wallToStore = [];
 	window.selectedWalls = [];
 	window.wallsBeingDragged = [];
+	window.BEGIN_MOUSEX = undefined;
+	window.BEGIN_MOUSEY = undefined;
 }
 
 /**
@@ -2933,18 +2945,18 @@ function is_rgba_fully_transparent(rgba){
  */
 function get_snapped_coordinates(pointX, pointY) {
 
-    const offsetX = parseFloat(window.CURRENT_SCENE_DATA.offsetx) || 0;
-    const offsetY = parseFloat(window.CURRENT_SCENE_DATA.offsety) || 0;
-
     if (window.CURRENT_SCENE_DATA.gridType == "1" || typeof window.CURRENT_SCENE_DATA.gridType == "undefined") {
         // Square grid
+        const offsetX = parseFloat(window.CURRENT_SCENE_DATA.offsetx) || 0;
+        const offsetY = parseFloat(window.CURRENT_SCENE_DATA.offsety) || 0;
         const gridWidth = parseFloat(window.CURRENT_SCENE_DATA.hpps)/2;
         const gridHeight = parseFloat(window.CURRENT_SCENE_DATA.vpps)/2;
         pointX = Math.round((pointX-offsetX) / gridWidth) * gridWidth + offsetX;
         pointY = Math.round((pointY-offsetY) / gridHeight) * gridHeight + offsetY;
     } else if (window.CURRENT_SCENE_DATA.gridType == "2" || window.CURRENT_SCENE_DATA.gridType == "3") {
         // Hex grid (vertical or horizontal)
-        console.log("Hex snapping is not implemented yet.");
+        // todo: decide which points you want to snap to -- assume all vertices and center for now   
+        [pointX, pointY] = getCurrentClosestHex(pointX, pointY, true, true);
     }
 
     return [pointX, pointY];
@@ -2968,11 +2980,24 @@ function get_event_cursor_position(event, preventSnap = false) {
     let pointX = Math.round(((eventLocation.pageX - window.VTTMargin) * (1.0 / window.ZOOM)));
     let pointY = Math.round(((eventLocation.pageY - window.VTTMargin) * (1.0 / window.ZOOM)));
 
+    if (!preventSnap && 
+		(window.DRAWFUNCTION === 'wall' || 
+			window.DRAWFUNCTION == 'wall-door' || 
+			window.DRAWFUNCTION == 'wall-window') &&
+	    (window.DRAWSHAPE === '3pointRound' ||
+		    window.DRAWSHAPE === 'line' ||
+			window.DRAWSHAPE === '3pointRect' ||
+			window.DRAWSHAPE === 'rect') &&
+	    window.SNAP_WALLS === true
+    ) {
+	    return wall_snap(pointX, pointY);
+    }
+	
     // Apply snapping if enabled
     if (!preventSnap && ((window.toggleSnap && !window.toggleDrawingSnap) || (window.toggleDrawingSnap && !window.toggleSnap))) {
         [pointX, pointY] = get_snapped_coordinates(pointX, pointY);
     }
-
+	
     return [pointX, pointY];
 }
 
@@ -2990,6 +3015,42 @@ function numToColor(num, alpha, max) {
 
   	return "rgba(" + red + "," + green + "," + blue + "," + alpha + ")";
 }
+
+//snap point to a near wall point
+const [wall_snap, clear_wall_snap] = function () {
+	let current_wall_snap_points = null;
+	function clear_wall_snap() { current_wall_snap_points = null }
+	function collect_wall_snap_points() {
+		const ret = [];
+		const adjustScale = window.CURRENT_SCENE_DATA.scale_factor*window.CURRENT_SCENE_DATA.conversion;
+		const walls = window.DRAWINGS.filter(d => (d[1] == "wall" && d[0].includes("line")));
+		for(let i=0; i<walls.length; i++){
+			const adjustedScale =  walls[i][8]/adjustScale;
+			ret.push([walls[i][3]/adjustedScale,walls[i][4]/adjustedScale]);
+			ret.push([walls[i][5]/adjustedScale,walls[i][6]/adjustedScale]);		
+		}
+		// also snap to walls being drawn with shift or right click
+		for(let i=0; i<window.StoredWalls.length; i++){
+			ret.push([window.StoredWalls[i][0],window.StoredWalls[i][1]]);
+			ret.push([window.StoredWalls[i][2],window.StoredWalls[i][3]]);		
+		}
+		return ret;
+	}
+	function wall_snap(x, y, limit) {
+		if(current_wall_snap_points === null) current_wall_snap_points = collect_wall_snap_points();
+    		if(!limit) limit = window.CURRENT_SCENE_DATA.hpps / 2;
+		for(let i=0; i<current_wall_snap_points.length; i++) {
+			const [px, py] = current_wall_snap_points[i];
+			const pdist = Math.sqrt(Math.pow(px - x,2) + Math.pow(py - y, 2));
+			if(pdist < limit) {
+				return [px, py];
+			}
+		}
+		return [x, y];
+	}
+	return [wall_snap, clear_wall_snap];
+}();
+
 /**
  * Pulls information from menu's or buttons without menu's to set values used by
  * drawing mousemove, mousedown, mousecontext events
@@ -3015,12 +3076,15 @@ function drawing_mousedown(e) {
 	let canvas = document.getElementById("temp_overlay");
 	let context = canvas.getContext("2d");
 
-	// get teh data from the menu's/buttons
+	// get the data from the menu's/buttons
 	const data = get_draw_data(e.data.clicked,  e.data.menu)
 	// select modifies this line but never resets it, so reset it here
 	// otherwise all drawings are dashed
 
-
+	/*	commented out as it's not consistent and is confusing can reasses if we enable other options for grid over
+	if(window.DRAWFUNCTION === 'measure') {
+		$("#VTT").css('--grid-overlay-on-tmp', '1');
+	}*/
 	
 	// these are generic values used by most drawing functionality
 	window.LINEWIDTH = data.draw_line_width
@@ -3030,7 +3094,7 @@ function drawing_mousedown(e) {
 	window.DRAWLOCATION = data.location
 	window.DRAWSHAPE = window.drawAudioPolygon || window.drawTokenWallPolygon ? 'polygon' : data.shape;
 	window.DRAWFUNCTION = window.drawAudioPolygon ? 'audio-polygon' : window.drawTokenWallPolygon ? 'token-wall-polygon' : data.function;
-
+	window.SNAP_WALLS = Boolean(data.snap_walls);
 	//these are used with walls or elevation tool
 	window.wallTop = data.wall_top_height;
 	window.wallBottom = data.wall_base_height;
@@ -3068,14 +3132,17 @@ function drawing_mousedown(e) {
 	else if(window.DRAWFUNCTION === "wall"){
 		// semi transparent black
 		window.DRAWCOLOR = "rgba(0, 255, 0, 1)"
-		if(data.type == 'terrain')
+		if(data.object_wall !== undefined)
 			window.DRAWCOLOR = "rgba(0, 180, 80, 1)"
+
 		if(window.DRAWSHAPE == 'line')
 			window.DRAWTYPE = "filled"
 		window.LINEWIDTH = 6;
 	}
 	else if(window.DRAWFUNCTION === "wall-door-convert" || window.DRAWFUNCTION === "wall-door" || window.DRAWFUNCTION === "door-door-convert"){
 		// semi transparent black
+
+		window.HIDDENICONDOOR = data.hidden_icon
 		window.DRAWCOLOR = doorColors[$('#door_types').val()].closed
 		window.DRAWTYPE = (window.DRAWFUNCTION === "door-door-convert") ? 'border' : "filled"
 		window.LINEWIDTH = 12;
@@ -3136,8 +3203,8 @@ function drawing_mousedown(e) {
 		deselect_all_tokens();
 	}
 	
-	const [pointX, pointY] = get_event_cursor_position(e)
-
+	clear_wall_snap();
+	const [pointX, pointY] = get_event_cursor_position(e);
 	if(window.DRAWSHAPE === "brush"){
 		window.BEGIN_MOUSEX = pointX
 		window.BEGIN_MOUSEY = pointY
@@ -3168,90 +3235,37 @@ function drawing_mousedown(e) {
 		window.BRUSHWAIT = false;
 		window.BRUSHPOINTS = [];
 		window.DRAWCOLOR = 'rgba(255,0,0,0.6)'
-
 		window.temp_context.fillStyle = window.DRAWCOLOR;
-		const hpps = window.CURRENT_SCENE_DATA.gridType == 2 ? window.CURRENT_SCENE_DATA.vpps : window.CURRENT_SCENE_DATA.hpps;
-
-		const hexSize = hpps/1.5 / window.CURRENT_SCENE_DATA.scale_factor || window.CURRENT_SCENE_DATA.hpps/1.5 / window.CURRENT_SCENE_DATA.scale_factor;
-
-		function drawHexagon(ctx, x, y) {
-			if(window.CURRENT_SCENE_DATA.gridType == 3){
-			  ctx.beginPath();
-			  ctx.moveTo(x + hexSize, y);
-			  for (let i = 1; i <= 6; i++) {
-			    let angle = i * Math.PI / 3;
-			    let dx = hexSize * Math.cos(angle);
-			    let dy = hexSize * Math.sin(angle);
-			    ctx.lineTo(x + dx, y + dy);
-			  }
-			  ctx.closePath();
-			  ctx.fill();
-			}
-			else{
-			  ctx.beginPath();
-			  ctx.moveTo(x, y + hexSize);
-			  for (let i = 1; i <= 6; i++) {
-			    let angle = i * Math.PI / 3;
-			    let dx = hexSize * Math.sin(angle);
-			    let dy = hexSize * Math.cos(angle);
-			    ctx.lineTo(x + dx, y + dy);
-			  }
-			  ctx.closePath();
-			  ctx.fill();
-			}
-		}
-
 
 		clear_temp_canvas()
-
-		const offscreen_canvas = new OffscreenCanvas($('#scene_map')[0].width, $('#scene_map')[0].height); 
-		const offscreen_context = offscreen_canvas.getContext('2d');
-		offscreen_context.fillStyle = "#FFF";
-
-		const [scaledX,scaledY] = [window.BEGIN_MOUSEX/window.CURRENT_SCENE_DATA.scale_factor, window.BEGIN_MOUSEY/window.CURRENT_SCENE_DATA.scale_factor];
-	
-
-		
-		if(window.CURRENT_SCENE_DATA.gridType == '1'){
-			const { x, y } = snap_point_to_grid(window.BEGIN_MOUSEX, window.BEGIN_MOUSEY, true, undefined, undefined, undefined, true);
+		const gridWidth = window.CURRENT_SCENE_DATA.gridType == 1 ? window.CURRENT_SCENE_DATA.hpps : 0;
+		const gridHeight = window.CURRENT_SCENE_DATA.gridType == 1 ? window.CURRENT_SCENE_DATA.vpps : 0;
+		let { x, y } = snap_point_to_grid(window.BEGIN_MOUSEX-gridWidth/2, window.BEGIN_MOUSEY-gridHeight/2, true);
+		if (window.CURRENT_SCENE_DATA.gridType == 1) {
 			window.BRUSHPOINTS.push([Math.round(x), Math.round(y)])
 		}
-		else{
-			const hpps = window.CURRENT_SCENE_DATA.gridType == 2 ? window.CURRENT_SCENE_DATA.vpps : window.CURRENT_SCENE_DATA.hpps;
-
-			const hexSize = hpps/1.5 / window.CURRENT_SCENE_DATA.scale_factor || window.CURRENT_SCENE_DATA.hpps/1.5 / window.CURRENT_SCENE_DATA.scale_factor;
-
-			const closeHexes = window.gridCentersArray.filter(d => Math.abs(d[0]*window.CURRENT_SCENE_DATA.scaleAdjustment.x-scaledX) < hexSize && Math.abs(d[1]*window.CURRENT_SCENE_DATA.scaleAdjustment.y-scaledY)< hexSize);
-
-			for(let i in closeHexes){
-				const hexCenter = closeHexes[i];
-				const x = hexCenter[0];
-				const y = hexCenter[1];
-				offscreen_context.clearRect(0, 0, offscreen_canvas.width, offscreen_canvas.height); 
-				offscreen_context.scale(window.CURRENT_SCENE_DATA.scaleAdjustment.x, window.CURRENT_SCENE_DATA.scaleAdjustment.y)
-				drawHexagon(offscreen_context, x, y);
-				const pixeldata = offscreen_context.getImageData(scaledX, scaledY, 1, 1).data;
-			    offscreen_context.setTransform(1, 0, 0, 1, 0, 0);
-			    if(pixeldata[1] > 200){
-			    	window.BRUSHPOINTS.push([Math.round(x),Math.round(y)]);
-				}
-			}	
-			window.BRUSHPOINTS = Array.from(new Set(window.BRUSHPOINTS.map(JSON.stringify)), JSON.parse)
+		else {
+			const scaleX = window.CURRENT_SCENE_DATA.scaleAdjustment?.x != undefined ? window.CURRENT_SCENE_DATA.scaleAdjustment.x : 1;
+			const scaleY = window.CURRENT_SCENE_DATA.scaleAdjustment?.y != undefined ? window.CURRENT_SCENE_DATA.scaleAdjustment.y : 1;
+			const scale = window.CURRENT_SCENE_DATA.scale_factor || 1;
+			window.BRUSHPOINTS.push([Math.round(x / scaleX / scale), Math.round(y / scaleY / scale)])
+		} 
+		window.BRUSHPOINTS = Array.from(new Set(window.BRUSHPOINTS.map(JSON.stringify)), JSON.parse)		
 		
-		
-			if(window.CURRENT_SCENE_DATA.gridType == '1'){
-				for(let i in window.BRUSHPOINTS){
-						drawRect(window.temp_context, window.BRUSHPOINTS[i][0], window.BRUSHPOINTS[i][1], window.CURRENT_SCENE_DATA.hpps, window.CURRENT_SCENE_DATA.vpps, window.DRAWCOLOR, true, window.DRAWTYPE);
-					}
-				}
-			else{
-			window.temp_context.scale(window.CURRENT_SCENE_DATA.scaleAdjustment.x, window.CURRENT_SCENE_DATA.scaleAdjustment.y)
-				for(let i in window.BRUSHPOINTS){
-					drawHexagon(window.temp_context, window.BRUSHPOINTS[i][0], window.BRUSHPOINTS[i][1])
-				}
-				window.temp_context.setTransform(1, 0, 0, 1, 0, 0);
+
+		if(window.CURRENT_SCENE_DATA.gridType == '1'){
+			for(let i in window.BRUSHPOINTS){
+				drawRect(window.temp_context, window.BRUSHPOINTS[i][0], window.BRUSHPOINTS[i][1], window.CURRENT_SCENE_DATA.hpps, window.CURRENT_SCENE_DATA.vpps, window.DRAWCOLOR, true, window.DRAWTYPE);
 			}
+		} else {
+			window.temp_context.scale(window.CURRENT_SCENE_DATA.scaleAdjustment.x, window.CURRENT_SCENE_DATA.scaleAdjustment.y)
+			for (let i in window.BRUSHPOINTS) {
+				drawHexagon(window.temp_context, window.BRUSHPOINTS[i][0], window.BRUSHPOINTS[i][1])
+			}
+			window.temp_context.setTransform(1, 0, 0, 1, 0, 0);
 		}
+		
+
 	}
 	else if (window.DRAWSHAPE === "polygon") {
 		if (window.BEGIN_MOUSEX && window.BEGIN_MOUSEX.length > 0) {
@@ -3291,7 +3305,7 @@ function drawing_mousedown(e) {
 				window.BEGIN_MOUSEY.push(pointY);
 				save3PointRect(e);
 				if(window.DRAWFUNCTION == 'wall')
-					redraw_light_walls(false);
+					redraw_light_walls({clearCanvas: false});
 				return;
 			} else {
 				window.BEGIN_MOUSEX.push(pointX);
@@ -3312,6 +3326,35 @@ function drawing_mousedown(e) {
 			false,
 			window.DRAWTYPE === "filled" ? 1 : window.LINEWIDTH,
 		);
+	}
+	else if (window.DRAWSHAPE === "3pointRound"){
+		if (window.BEGIN_MOUSEX && window.BEGIN_MOUSEX.length > 0) {
+			if (window.BEGIN_MOUSEX.length == 2) {
+				window.BEGIN_MOUSEX.push(pointX);
+				window.BEGIN_MOUSEY.push(pointY);
+				save3PointRound(e);
+				if(window.DRAWFUNCTION == 'wall')
+					redraw_light_walls({clearCanvas: false});
+				return;
+			} else {
+				window.BEGIN_MOUSEX.push(pointX);
+				window.BEGIN_MOUSEY.push(pointY);
+			}
+		} else {
+			window.BEGIN_MOUSEX = [pointX];
+			window.BEGIN_MOUSEY = [pointY];
+		}
+		clear_temp_canvas()
+		draw3PointRound(context,
+				joinPointsArray(
+					window.BEGIN_MOUSEX,
+					window.BEGIN_MOUSEY
+				),
+				window.DRAWCOLOR,
+				window.LINEWIDTH,
+				pointX, pointY
+		);
+		
 	}
 	else if (window.DRAWFUNCTION === "draw_text"){
 		window.BEGIN_MOUSEX = mousePosition.clientX;
@@ -3366,6 +3409,12 @@ function drawing_mousemove(e) {
 
 	const isFilled = window.DRAWTYPE === "filled" || window.DRAWTYPE === "light";
 	const mouseMoveFps = Math.round((1000.0 / 24.0));
+	if (window.MOUSEDOWN && window.DRAWFUNCTION === "select" && e.which == 1){
+		//change cursor for "fullyInside" select mode
+		$("#temp_overlay").css('cursor', (window.BEGIN_MOUSEY < mouseY) ? 'crosshair' : 'cell');
+	}else{
+		$("#temp_overlay").css('cursor', '');
+	}
 
 
 	window.MOUSEMOVEWAIT = true;
@@ -3496,21 +3545,26 @@ function drawing_mousemove(e) {
 
 					}
 				}
-	
-
-				
-				
-				redraw_light_walls(true, true);
+				redraw_light_walls({editingWallPoints: true});
 			}
 			else{
-				drawRect(window.temp_context,
-						window.BEGIN_MOUSEX,
-						window.BEGIN_MOUSEY,
-						width,
-						height,
-						window.DRAWCOLOR,
-						isFilled,
-						window.LINEWIDTH);
+				if (window.DRAWFUNCTION === "select" && e.button == 0){
+					const selInside = (window.BEGIN_MOUSEY > mouseY)
+					$("#temp_overlay").css('cursor', selInside ? 'crosshair' : 'cell');
+					draw_select_box(window.BEGIN_MOUSEX,
+							window.BEGIN_MOUSEY,
+							width,
+							height, selInside);
+				} else {
+					drawRect(window.temp_context,
+						 window.BEGIN_MOUSEX,
+						 window.BEGIN_MOUSEY,
+						 width,
+						 height,
+						 window.DRAWCOLOR,
+						 isFilled,
+						 window.LINEWIDTH);
+				}
 			}
 		}
 		if (window.DRAWSHAPE === "text_erase") {
@@ -3637,93 +3691,35 @@ function drawing_mousemove(e) {
 			}
 		}
 		else if (window.DRAWSHAPE == "grid-brush"){
-			
 			window.temp_context.fillStyle = window.DRAWCOLOR;
-			const hpps = window.CURRENT_SCENE_DATA.gridType == 2 ? window.CURRENT_SCENE_DATA.vpps : window.CURRENT_SCENE_DATA.hpps;
-
-			const hexSize = hpps/1.5 / window.CURRENT_SCENE_DATA.scale_factor || window.CURRENT_SCENE_DATA.hpps/1.5 / window.CURRENT_SCENE_DATA.scale_factor;
-
-			function drawHexagon(ctx, x, y) {
-				if(window.CURRENT_SCENE_DATA.gridType == 3){
-				  ctx.beginPath();
-				  ctx.moveTo(x + hexSize, y);
-				  for (let i = 1; i <= 6; i++) {
-				    let angle = i * Math.PI / 3;
-				    let dx = hexSize * Math.cos(angle);
-				    let dy = hexSize * Math.sin(angle);
-				    ctx.lineTo(x + dx, y + dy);
-				  }
-				  ctx.closePath();
-				  ctx.fill();
-				}
-				else{
-				  ctx.beginPath();
-				  ctx.moveTo(x, y + hexSize);
-				  for (let i = 1; i <= 6; i++) {
-				    let angle = i * Math.PI / 3;
-				    let dx = hexSize * Math.sin(angle);
-				    let dy = hexSize * Math.cos(angle);
-				    ctx.lineTo(x + dx, y + dy);
-				  }
-				  ctx.closePath();
-				  ctx.fill();
-				}
-			}
-		
-
-			clear_temp_canvas()
-
-			const offscreen_canvas = new OffscreenCanvas($('#scene_map')[0].width, $('#scene_map')[0].height); 
-			const offscreen_context = offscreen_canvas.getContext('2d');
-			offscreen_context.fillStyle = "#FFF";
-
-			const [scaledX,scaledY] = [mouseX/window.CURRENT_SCENE_DATA.scale_factor, mouseY/window.CURRENT_SCENE_DATA.scale_factor];
 			
-
-		
-
-			if(window.CURRENT_SCENE_DATA.gridType == '1'){
-				const roundDown = true;
-				const { x, y } = snap_point_to_grid(mouseX, mouseY, true, undefined, undefined, undefined, roundDown);
+			clear_temp_canvas()
+			const gridWidth = window.CURRENT_SCENE_DATA.gridType == 1 ? window.CURRENT_SCENE_DATA.hpps : 0;
+			const gridHeight = window.CURRENT_SCENE_DATA.gridType == 1 ? window.CURRENT_SCENE_DATA.vpps : 0;
+			let { x, y } = snap_point_to_grid(mouseX-gridWidth/2, mouseY-gridHeight/2, true);
+			
+			if (window.CURRENT_SCENE_DATA.gridType == 1){
 				window.BRUSHPOINTS.push([Math.round(x), Math.round(y)])
 			}
 			else{
-				const hpps = window.CURRENT_SCENE_DATA.gridType == 2 ? window.CURRENT_SCENE_DATA.vpps : window.CURRENT_SCENE_DATA.hpps;
-
-				const hexSize = hpps/1.5 / window.CURRENT_SCENE_DATA.scale_factor || window.CURRENT_SCENE_DATA.hpps/1.5 / window.CURRENT_SCENE_DATA.scale_factor;
-
-				const closeHexes = window.gridCentersArray.filter(d => Math.abs(d[0]*window.CURRENT_SCENE_DATA.scaleAdjustment.x-scaledX) < hexSize && Math.abs(d[1]*window.CURRENT_SCENE_DATA.scaleAdjustment.y-scaledY)< hexSize);
-
-				for(let i in closeHexes){
-					const hexCenter = closeHexes[i];
-					const x = hexCenter[0];
-					const y = hexCenter[1];
-					offscreen_context.clearRect(0, 0, offscreen_canvas.width, offscreen_canvas.height); 
-					offscreen_context.scale(window.CURRENT_SCENE_DATA.scaleAdjustment.x, window.CURRENT_SCENE_DATA.scaleAdjustment.y)
-					drawHexagon(offscreen_context, x, y);
-					const pixeldata = offscreen_context.getImageData(scaledX, scaledY, 1, 1).data;
-				    offscreen_context.setTransform(1, 0, 0, 1, 0, 0);
-				    if(pixeldata[1] > 200){
-				    	window.BRUSHPOINTS.push([Math.round(x),Math.round(y)]);
-					}
-				}	
+				const scaleX = window.CURRENT_SCENE_DATA.scaleAdjustment?.x != undefined ? window.CURRENT_SCENE_DATA.scaleAdjustment.x : 1;
+				const scaleY = window.CURRENT_SCENE_DATA.scaleAdjustment?.y != undefined ? window.CURRENT_SCENE_DATA.scaleAdjustment.y : 1;
+				const scale = window.CURRENT_SCENE_DATA.scale_factor || 1;
+				window.BRUSHPOINTS.push([Math.round(x / scaleX / scale), Math.round(y / scaleY / scale)])
 			}
-			
 			window.BRUSHPOINTS = Array.from(new Set(window.BRUSHPOINTS.map(JSON.stringify)), JSON.parse)
-			
-			
-			if(window.CURRENT_SCENE_DATA.gridType == '1'){
-				for(let i in window.BRUSHPOINTS){
+
+			if (window.CURRENT_SCENE_DATA.gridType == '1') {
+				for (let i in window.BRUSHPOINTS) {
 					drawRect(window.temp_context, window.BRUSHPOINTS[i][0], window.BRUSHPOINTS[i][1], window.CURRENT_SCENE_DATA.hpps, window.CURRENT_SCENE_DATA.vpps, window.DRAWCOLOR, true, window.DRAWTYPE);
-					}
 				}
-			else{
+			} else {
 				window.temp_context.scale(window.CURRENT_SCENE_DATA.scaleAdjustment.x, window.CURRENT_SCENE_DATA.scaleAdjustment.y)
- 				for(let i in window.BRUSHPOINTS){
- 					drawHexagon(window.temp_context, window.BRUSHPOINTS[i][0], window.BRUSHPOINTS[i][1])
- 				}
- 				window.temp_context.setTransform(1, 0, 0, 1, 0, 0);
- 			}
+				for (let i in window.BRUSHPOINTS) {
+					drawHexagon(window.temp_context, window.BRUSHPOINTS[i][0], window.BRUSHPOINTS[i][1])
+				}
+				window.temp_context.setTransform(1, 0, 0, 1, 0, 0);
+			}
 		}
 	}
 			
@@ -3764,10 +3760,70 @@ function drawing_mousemove(e) {
 			mouseY
 		);
 	}
+	else if (window.DRAWSHAPE === "3pointRound" &&
+		 window.BEGIN_MOUSEX && window.BEGIN_MOUSEX.length > 0) {
+		clear_temp_canvas();
+		WaypointManager.setCanvas(window.temp_canvas);
+		WaypointManager.cancelFadeout()
+		draw3PointRound( window.temp_context,
+			joinPointsArray(
+				window.BEGIN_MOUSEX,
+				window.BEGIN_MOUSEY
+			),
+			window.DRAWCOLOR,
+			window.LINEWIDTH,
+			mouseX,
+			mouseY
+		);
+	}
 	
 
 	
 	
+}
+
+function intersectsRotatedSquare(rect, cx, cy, w, angle) {
+    const rad = -angle * (Math.PI / 180);
+    const rectCX = rect.x + rect.width / 2;
+    const rectCY = rect.y + rect.height / 2;
+    const dx = rectCX - cx;
+    const dy = rectCY - cy;
+    const localRectX = dx * Math.cos(rad) - dy * Math.sin(rad);
+    const localRectY = dx * Math.sin(rad) + dy * Math.cos(rad);
+    const cos = Math.abs(Math.cos(rad));
+    const sin = Math.abs(Math.sin(rad));
+    const localRectW = rect.width * cos + rect.height * sin;
+    const localRectH = rect.width * sin + rect.height * cos;
+    const halfW = w / 2;
+    const halfRectW = localRectW / 2;
+    const halfRectH = localRectH / 2;
+    return Math.abs(localRectX) <= (halfW + halfRectW) &&
+           Math.abs(localRectY) <= (halfW + halfRectH);
+}
+function isRotatedSquareInsideRect(rect, cx, cy, w, angle) {
+    const rad = angle * (Math.PI / 180);
+    const halfW = w / 2;
+    const _cos = Math.cos(rad);
+    const _sin = Math.sin(rad);
+    const corners = [
+        { x: -halfW, y: -halfW },
+        { x:  halfW, y: -halfW },
+        { x:  halfW, y:  halfW },
+        { x: -halfW, y:  halfW }
+    ];
+    const rectRight = rect.x + rect.width;
+    const rectBottom = rect.y + rect.height;
+    for (let i = 0; i < corners.length; i++) {
+        const rotatedX = corners[i].x * _cos - corners[i].y * _sin;
+        const rotatedY = corners[i].x * _sin + corners[i].y * _cos;
+        const worldX = rotatedX + cx;
+        const worldY = rotatedY + cy;
+        if (worldX < rect.x || worldX > rectRight || 
+            worldY < rect.y || worldY > rectBottom) {
+            return false; // point outside
+        }
+    }
+    return true;
 }
 
 /**
@@ -3777,6 +3833,9 @@ function drawing_mousemove(e) {
  * @returns
  */
 function drawing_mouseup(e) {
+	hide_select_box();
+	//$("#VTT").css('--grid-overlay-on-tmp', '0');	commented out as it's not consistent and is confusing can reasses if we enable other options for grid over
+	
 	// ignore this if we're dragging a token
 	if ($(".ui-draggable-dragging:not([data-clone-id])").length > 0) {
 		$(".ui-draggable-dragging:not([data-clone-id])").toggleClass('.ui-draggable-dragging', false);
@@ -3838,7 +3897,7 @@ function drawing_mouseup(e) {
 	const width = mouseX - window.BEGIN_MOUSEX;
 	const height = mouseY - window.BEGIN_MOUSEY;
 	// data is modified by each shape/function but as a starting point fill it up
-	let hidden = $('[data-hidden]').hasClass('button-enabled');
+	const hidden = (Boolean(window.HIDDENICONDOOR) == true);
 	let data = ['',
 		 window.DRAWTYPE,
 		 (window.DRAWDAYLIGHT) ? window.DRAWDAYLIGHT : window.DRAWCOLOR,
@@ -3901,6 +3960,7 @@ function drawing_mouseup(e) {
 				data[4] = null
 				data[5] = null
 				data[6] = window.CURRENT_SCENE_DATA.scale_factor
+				break;
 			case "paint-bucket":
 				data[0] = "paint-bucket"
 				data[7] = 0
@@ -3923,6 +3983,7 @@ function drawing_mouseup(e) {
 			data[1] = "wall"
 			data[10] = window.wallBottom
 			data[11] = window.wallTop
+			break;
 		case 'elev':
 			data[1] = "elev"
 			data[2] = window.mapElev
@@ -3998,7 +4059,7 @@ function drawing_mouseup(e) {
 				 window.wallTop];
 			window.DRAWINGS.push(line4);
 
-			window.wallUndo.push({
+			pushWallUndo({
 				undo: [[...line1], [...line2], [...line3], [...line4]]
 			});
 		}
@@ -4027,12 +4088,12 @@ function drawing_mouseup(e) {
 						window.wallBottom,
 				 		window.wallTop];
 					window.DRAWINGS.push(data);
-					window.wallUndo.push({
+					pushWallUndo({
 						undo: [[...data]]
 					});
 			}
 			if(undoArray.length > 0){
-				window.wallUndo.push({
+				pushWallUndo({
 					undo: [...undoArray]
 				});
 			}
@@ -4040,13 +4101,14 @@ function drawing_mouseup(e) {
 			window.StoredWalls = [];
 			window.wallToStore = [];
 			window.MOUSEDOWN = false;
-			redraw_light_walls();
+			redraw_light_walls({wallsChanged:true});
 			redraw_light();
+			redraw_fog(); // could limit this to point line of sight tool drawings
 		}
 		redraw_elev();
 		redraw_drawn_light();
 		redraw_drawings();
-		sync_drawings();
+		sync_drawings({wallsChanged:window.DRAWFUNCTION == "wall" || window.DRAWFUNCTION == 'wall-door'});
 	}
 	else if (window.DRAWFUNCTION === "eraser"){
 		if (window.DRAWSHAPE === "rect"){
@@ -4107,7 +4169,7 @@ function drawing_mouseup(e) {
 		let undoArray = [];
 		let redoArray = [];
 		for(let i=0; i<walls.length; i++){
-			if(walls[i][2].startsWith('rgba(0, 255, 0') && window.DRAWFUNCTION === "door-door-convert")
+			if(!doorColorsArray.includes(walls[i][2]) && window.DRAWFUNCTION === "door-door-convert")
 				continue;
 			let wallInitialScale = walls[i][8];
 			let scale_factor = window.CURRENT_SCENE_DATA.scale_factor != undefined ? window.CURRENT_SCENE_DATA.scale_factor : 1;
@@ -4432,7 +4494,7 @@ function drawing_mouseup(e) {
 				 y2,
 				 12,
 				 window.CURRENT_SCENE_DATA.scale_factor*window.CURRENT_SCENE_DATA.conversion,
-				 0, 
+				 hidden,
 				 window.wallBottom, 
 				 window.wallTop
 				 ];	
@@ -4440,15 +4502,18 @@ function drawing_mouseup(e) {
 				undoArray.push([...data]);
 			}					
 		}
- 		window.wallUndo.push({
+ 		pushWallUndo({
 			undo: [...undoArray],
 			redo: [...redoArray]
 		});
 
-		redraw_light_walls();
-        redraw_drawn_light();
+		redraw_light_walls({wallsChanged: true});
+       	redraw_drawn_light(); // could limit this to point line of sight tool drawings
+		redraw_drawings(); // could limit this to point line of sight tool drawings
+		redraw_fog(); // could limit this to point line of sight tool drawings
+		redraw_elev(); // could limit this to point line of sight tool drawings
         redraw_light();
-		sync_drawings();
+		sync_drawings({wallsChanged: true});
 	}
 	else if(window.DRAWFUNCTION === "wall-edit"){
 		if(window.DraggingWallPoints == undefined || window.DraggingWallPoints == false){
@@ -4568,13 +4633,16 @@ function drawing_mouseup(e) {
 				undoArray.push([...window.DRAWINGS[index]])
 				window.selectedWalls[i].wall = [...window.DRAWINGS[index]];	
 			}	
-			window.wallUndo.push({undo: [...undoArray], redo:[...redoArray], selectedWalls: originalSelected});
+			pushWallUndo({undo: [...undoArray], redo:[...redoArray], selectedWalls: originalSelected});
 		}
 
-      	redraw_light_walls();
-        redraw_drawn_light();
+      	redraw_light_walls({wallsChanged: true});
+        redraw_drawn_light(); // could limit this to point line of sight tool drawings
+		redraw_drawings(); // could limit this to point line of sight tool drawings
+		redraw_fog(); // could limit this to point line of sight tool drawings
+		redraw_elev(); // could limit this to point line of sight tool drawings
         redraw_light(true);
-		sync_drawings();
+		sync_drawings({wallsChanged: true});
 		window.MB.sendMessage("custom/myVTT/forceRedrawLight");
 		window.wallsBeingDragged = [];
 	
@@ -4593,48 +4661,29 @@ function drawing_mouseup(e) {
 
 	else if (window.DRAWFUNCTION == "select") {
 		// FIND TOKENS INSIDE THE AREA
-		let c = 0;
+		const fullyInside = (window.BEGIN_MOUSEY > mouseY);
+		const y0 = Math.min(window.BEGIN_MOUSEY, mouseY);
+		const y1 = Math.max(window.BEGIN_MOUSEY, mouseY);
+		const x0 = Math.min(window.BEGIN_MOUSEX, mouseX);
+		const x1 = Math.max(window.BEGIN_MOUSEX, mouseX);
 		for (let id in window.TOKEN_OBJECTS) {
-			if(window.TOKEN_OBJECTS[id].options.type == 'door' || window.TOKEN_OBJECTS[id].options.combatGroupToken){
+			const curr = window.TOKEN_OBJECTS[id];
+			if(!curr.isSelectable()) continue;
+			const tokenImageRect = $("#tokens>div[data-id='" + id + "'] .token-image")?.[0]?.getBoundingClientRect();
+			if(!tokenImageRect) {
+				console.log("ERROR IMAGE BOUNDING RECT FOR", id, curr);
 				continue;
 			}
-
-			let curr = window.TOKEN_OBJECTS[id];
-
-
-			let tokenImageRect = $("#tokens>div[data-id='" + curr.options.id + "'] .token-image")[0].getBoundingClientRect();	
-			let size = window.TOKEN_OBJECTS[curr.options.id].options.size;	
-			let toktop = (parseInt(tokenImageRect.top) + window.scrollY - window.VTTMargin) * (1.0 / window.ZOOM);
-			let tokleft = (parseInt(tokenImageRect.left)  + window.scrollX - window.VTTMargin) * (1.0 / window.ZOOM);
-			let tokright = (parseInt(tokenImageRect.right) + window.scrollX - window.VTTMargin) * (1.0 / window.ZOOM);
-			let tokbottom = (parseInt(tokenImageRect.bottom) + window.scrollY - window.VTTMargin) * (1.0 / window.ZOOM);
-			let scaledRemainderTop = (tokbottom-toktop-size)/2;
-			let scaledRemainderLeft = (tokright-tokleft-size)/2;
-			if(window.TOKEN_OBJECTS[curr.options.id].options.tokenStyleSelect == 'circle' || window.TOKEN_OBJECTS[curr.options.id].options.tokenStyleSelect == 'square' || $("#tokens>div[data-id='" + curr.options.id + "']").hasClass("isAoe")){
-				scaledRemainderTop = 0;
-				scaledRemainderLeft = 0;
-			}
-			if (Math.min(window.BEGIN_MOUSEY, mouseY, tokbottom-scaledRemainderTop) == tokbottom-scaledRemainderTop || Math.max(window.BEGIN_MOUSEY, mouseY, toktop+scaledRemainderTop) == toktop+scaledRemainderTop)
-				continue;
-			if (Math.min(window.BEGIN_MOUSEX, mouseX, tokright-scaledRemainderLeft) == tokright-scaledRemainderLeft || Math.max(window.BEGIN_MOUSEX, mouseX, tokleft+scaledRemainderLeft) == tokleft+scaledRemainderLeft)
-				continue;
-
-			c++;
-			// TOKEN IS INSIDE THE SELECTION
-			if (window.DM || !curr.options.hidden) {
-				let tokenDiv = curr.isLineAoe() ? $(`#tokens>div[data-id='${curr.options.id}'] [data-img]`) : $(`#tokens>div[data-id='${curr.options.id}']`)
-				if(tokenDiv.css("pointer-events")!="none" && tokenDiv.css("display")!="none" && !tokenDiv.hasClass("ui-draggable-disabled")) {
-					curr.selected = true;
-				}
-			}
-
+			const CX = ((parseInt(tokenImageRect.left) + parseInt(tokenImageRect.right))/2 + window.scrollX - window.VTTMargin) / window.ZOOM;			
+			const CY = ((parseInt(tokenImageRect.top) + parseInt(tokenImageRect.bottom))/2 + window.scrollY - window.VTTMargin) / window.ZOOM;
+			const isCircle = curr.options.tokenStyleSelect == 'circle'
+			const size = curr.options.size * ((isCircle || curr.options.tokenStyleSelect == 'square' || $("#tokens>div[data-id='" + id + "']").hasClass("isAoe")) ? (curr.options.imageSize || 1) : 1);
+			const R = (isCircle ? 0 : curr.options.rotation) || 0;
+			curr.selected = (shiftHeld && curr.selected == true) || (fullyInside ? isRotatedSquareInsideRect : intersectsRotatedSquare) (
+				{x:x0, y:y0, width:x1-x0, height: y1-y0}, CX, CY, size, R);
 		}
 		$("#temp_overlay").css('z-index', '25');
-		window.MULTIPLE_TOKEN_SELECTED = (c > 1);
 		draw_selected_token_bounding_box();
-		
-
-		console.log("READY");
 	}
 	else if (window.DRAWFUNCTION == "measure") {
 		WaypointManager.fadeoutMeasuring(window.PLAYER_ID)
@@ -4690,6 +4739,30 @@ function drawing_contextmenu(e) {
 				window.DRAWCOLOR,
 				window.DRAWTYPE === "fill" || window.DRAWTYPE === "light",
 				1,
+				Math.round(((mousePosition.pageX - window.VTTMargin) * (1.0 / window.ZOOM))),
+				Math.round(((mousePosition.pageY - window.VTTMargin) * (1.0 / window.ZOOM)))
+			);
+		}
+		else{
+			// cancel polygon if on last point
+			clear_temp_canvas();
+		}
+	}
+	else if (window.DRAWSHAPE === "3pointRound") {
+		window.BEGIN_MOUSEX.pop();
+		window.BEGIN_MOUSEY.pop();
+		if(window.BEGIN_MOUSEX.length > 0){
+			let canvas = document.getElementById("temp_overlay");
+			let ctx = canvas.getContext("2d");
+			clear_temp_canvas();
+			draw3PointRound(
+				ctx,
+				joinPointsArray(
+					window.BEGIN_MOUSEX,
+					window.BEGIN_MOUSEY
+				),
+				window.DRAWCOLOR,
+				window.LINEWIDTH,
 				Math.round(((mousePosition.pageX - window.VTTMargin) * (1.0 / window.ZOOM))),
 				Math.round(((mousePosition.pageY - window.VTTMargin) * (1.0 / window.ZOOM)))
 			);
@@ -4916,8 +4989,8 @@ function handle_drawing_button_click() {
 		stop_drawing();
 		if(window.CURRENT_SCENE_DATA != undefined){
 			if($('#show_walls').hasClass('button-enabled') || $(clicked).is("#wall_button") || $("#wall_button").hasClass('ddbc-tab-options__header-heading--is-active')  || $('.top_menu.visible [data-shape="paint-bucket"]').hasClass('button-enabled')){
-				redraw_light_walls();
-				$('.hiddenDoor').css('display', 'block');	
+				redraw_light_walls(); 
+				$('.hiddenDoor').css('display', 'block');
 				$(`[id*='wallHeight']`).css('display', 'block');
 			}
 			else{
@@ -5009,24 +5082,55 @@ function drawCircle(ctx, centerX, centerY, radius, style, fill=true, lineWidth =
 
 }
 
+
+function drawHexagon(ctx, x, y) {
+	const hpps = window.CURRENT_SCENE_DATA.gridType == 2 ? window.CURRENT_SCENE_DATA.vpps : window.CURRENT_SCENE_DATA.hpps;
+
+	const hexSize = hpps / 1.5 / window.CURRENT_SCENE_DATA.scale_factor || window.CURRENT_SCENE_DATA.hpps / 1.5 / window.CURRENT_SCENE_DATA.scale_factor;
+
+	if (window.CURRENT_SCENE_DATA.gridType == 3) {
+		ctx.beginPath();
+		ctx.moveTo(x + hexSize, y);
+		for (let i = 1; i <= 6; i++) {
+			let angle = i * Math.PI / 3;
+			let dx = hexSize * Math.cos(angle);
+			let dy = hexSize * Math.sin(angle);
+			ctx.lineTo(x + dx, y + dy);
+		}
+		ctx.closePath();
+		ctx.fill();
+	}
+	else {
+		ctx.beginPath();
+		ctx.moveTo(x, y + hexSize);
+		for (let i = 1; i <= 6; i++) {
+			let angle = i * Math.PI / 3;
+			let dx = hexSize * Math.sin(angle);
+			let dy = hexSize * Math.cos(angle);
+			ctx.lineTo(x + dx, y + dy);
+		}
+		ctx.closePath();
+		ctx.fill();
+	}
+}
+
+		 
+
 function drawRect(ctx, startx, starty, width, height, style, fill=true, lineWidth = 6, addStrokeToFill = false, addDottedStrokeToBorder)
 {
+	const scale = window.CURRENT_SCENE_DATA.scale_factor;
 	ctx.beginPath();
 	ctx.lineWidth = lineWidth;
 	ctx.strokeStyle = style;
 	ctx.fillStyle = style;
-	if(fill)
-	{
-		ctx.rect(startx/window.CURRENT_SCENE_DATA.scale_factor, starty/window.CURRENT_SCENE_DATA.scale_factor, width/window.CURRENT_SCENE_DATA.scale_factor, height/window.CURRENT_SCENE_DATA.scale_factor);
+	ctx.rect(startx/scale, starty/scale, width/scale, height/scale);
+	if(fill) {
 		ctx.fill()
 		if(addStrokeToFill){
 			ctx.stroke();
 		}
-	}
-	else
-	{
-		ctx.rect(startx/window.CURRENT_SCENE_DATA.scale_factor, starty/window.CURRENT_SCENE_DATA.scale_factor, width/window.CURRENT_SCENE_DATA.scale_factor, height/window.CURRENT_SCENE_DATA.scale_factor);
-		ctx.stroke();
+	} else {
+		ctx.stroke();		
 		if(addDottedStrokeToBorder){
 			ctx.setLineDash([2*lineWidth, 2*lineWidth])
 			ctx.strokeStyle = `rgba(0,0,0,1)`;
@@ -5201,7 +5305,7 @@ function drawPolygon (
 ) {
 	if(fill && islight && replacefog){
 		
-		ctx.lineWidth = 6;
+
 		ctx.fillStyle = 'rgba(255,255,255,1)';
 		ctx.strokeStyle = 'rgba(0,0,0,1)';
 		
@@ -5219,11 +5323,13 @@ function drawPolygon (
 			ctx.lineTo(mouseX/adjustScale/window.CURRENT_SCENE_DATA.scale_factor, mouseY/adjustScale/window.CURRENT_SCENE_DATA.scale_factor);
 		}
 		ctx.closePath();
-		
-	
 		ctx.fill();
-		ctx.stroke();
-
+		if(lineWidth>0){
+			ctx.save();
+			ctx.globalCompositeOperation = 'destination-out';
+			ctx.stroke();
+			ctx.restore();
+		}
 	}
 	else{
 		ctx.save();
@@ -5266,9 +5372,54 @@ function drawPolygon (
 			ctx.strokeStyle = style;
 			ctx.stroke();
 		}
+		ctx.restore();
 	}
 
 }
+
+//just returns points if ctx==null
+function draw3PointRound(ctx, points, style, lineWidth,
+			 mouseX = null, mouseY = null,
+			 scale = window.CURRENT_SCENE_DATA.scale_factor
+			) {
+	const ret = [];
+	const pts = (mouseX !== null && mouseY !== null) ? [...points, {x: mouseX, y: mouseY}] : points
+	if(pts.length < 2) return ret;
+	const pt1 = {x:(pts[1].x + pts[0].x)/2, y:(pts[1].y + pts[0].y)/2}
+	const radius = Math.sqrt(Math.pow(pts[0].x - pts[1].x, 2) + Math.pow(pts[0].y - pts[1].y, 2))/2;
+	const startAngle = Math.atan2(pts[0].y - pt1.y, pts[0].x - pt1.x);
+	let endAngle = pts.length < 3 ? (startAngle - 2 * Math.PI) : Math.atan2(pts[2].y - pt1.y, pts[2].x - pt1.x);
+	while(endAngle <= startAngle) {
+		endAngle += 2 * Math.PI;
+	}
+	//snap to full "circle" if near
+	if(endAngle - startAngle < 0.35) endAngle = startAngle + 2*Math.PI; 
+	if(ctx) {
+		ctx.save();	
+		ctx.strokeStyle = style;
+		ctx.lineWidth = lineWidth;		
+		ctx.beginPath();
+	}
+	//todo: different/better heuristic for how many segments?
+	const density = Math.min(Math.ceil(radius / window.CURRENT_SCENE_DATA.hpps) * 2 + 3, 16);
+	const segments = Math.min(density, Math.ceil(density * ((endAngle - startAngle) / (2 * Math.PI))));
+	for (let i = 0; i <= segments; i++) {
+		const currentAngle = startAngle + (endAngle - startAngle) * (i / segments);
+		const x = (pt1.x + radius * Math.cos(currentAngle));
+		const y = (pt1.y + radius * Math.sin(currentAngle));
+		if(ctx) {
+			ctx[ i === 0 ? "moveTo" : "lineTo"](x / scale, y / scale);
+		} else {
+			ret.push({x:x,y:y});
+		}
+	}
+	if(ctx) {
+		ctx.stroke()
+		ctx.restore();
+	};
+	return ret;
+}
+
 function draw3PointRect(
 	ctx,
 	points,
@@ -5350,6 +5501,7 @@ function draw3PointRect(
 		ctx.strokeStyle = style;
 		ctx.stroke();
 	}
+	ctx.restore();
 }
 function calculateFourthPoint(point1, point2, point3) {
     let length = Math.sqrt(Math.pow(point2.x - point1.x, 2) + Math.pow(point2.y - point1.y, 2));
@@ -5379,9 +5531,9 @@ function bucketFill(ctx, mouseX, mouseY, fogStyle = 'rgba(0,0,0,0)', fogType = 0
 	}
 
 	const isBlur = parseInt(blur) > 0;
-	
 	const bucketFillCtx = window.offScreenCombineContext;
 	bucketFillCtx.clearRect(0, 0, bucketFillCtx.canvas.width, bucketFillCtx.canvas.height);
+
 	bucketFillCtx.globalCompositeOperation = "lighten";
 	bucketFillCtx.filter = isBlur ? `blur(${parseInt(blur)}px)` : `none`;
 
@@ -5495,14 +5647,17 @@ function save3PointRect(e){
 			undoArray.push([...data]);
 		}
 
-		window.wallUndo.push({
+		pushWallUndo({
 			undo: [...undoArray]
 		});
-			
+
 
 		window.MOUSEDOWN = false;
-		redraw_light_walls();
-        redraw_drawn_light();
+		redraw_light_walls({wallsChanged: true});
+        redraw_drawn_light(); // could limit this to point line of sight tool drawings
+		redraw_drawings(); // could limit this to point line of sight tool drawings
+		redraw_fog(); // could limit this to point line of sight tool drawings
+		redraw_elev(); // could limit this to point line of sight tool drawings
         redraw_light();
 	}
 	else if(window.DRAWFUNCTION === "elev"){
@@ -5543,13 +5698,50 @@ function save3PointRect(e){
 	clear_temp_canvas()
 
 	if (window.DRAWFUNCTION === "draw" || window.DRAWFUNCTION === "wall" || window.DRAWFUNCTION === 'elev') {
-		sync_drawings();
+		sync_drawings({wallsChanged: window.DRAWFUNCTION === "wall"});
 	} else {
 		sync_fog();
 	}
 	window.BEGIN_MOUSEX = [];
 	window.BEGIN_MOUSEY = [];
 }
+
+function save3PointRound(e){  //only used for wall currently
+	if(window.DRAWFUNCTION !== "wall") return; //error?
+	let undoArray = []
+	const polygonPoints = draw3PointRound(null, joinPointsArray(window.BEGIN_MOUSEX, window.BEGIN_MOUSEY), scale=window.CURRENT_SCENE_DATA.scale_factor*window.CURRENT_SCENE_DATA.conversion);
+	for(let point = 0; point<polygonPoints.length - 1; point++){
+		const l = ['line',
+			"wall",
+			window.DRAWCOLOR,
+			polygonPoints[point].x,
+			polygonPoints[point].y,
+			polygonPoints[point+1].x,
+			polygonPoints[point+1].y,
+			window.LINEWIDTH,
+			window.CURRENT_SCENE_DATA.scale_factor*window.CURRENT_SCENE_DATA.conversion,
+			0,
+			window.wallBottom,
+			window.wallTop];
+		window.DRAWINGS.push(l);
+		undoArray.push(l);
+	}
+	pushWallUndo({
+		undo: [...undoArray]
+	});
+	window.MOUSEDOWN = false;
+	redraw_light_walls({wallsChanged: true});
+	redraw_drawn_light(); // could limit this to point line of sight tool drawings
+	redraw_drawings(); // could limit this to point line of sight tool drawings
+	redraw_fog(); // could limit this to point line of sight tool drawings
+	redraw_elev(); // could limit this to point line of sight tool drawings
+	redraw_light();
+	clear_temp_canvas()
+	sync_drawings({wallsChanged: true});
+	window.BEGIN_MOUSEX = [];
+	window.BEGIN_MOUSEY = [];
+}
+
 function savePolygon(e) {
 	const polygonPoints = joinPointsArray(window.BEGIN_MOUSEX, window.BEGIN_MOUSEY);
 	let data;
@@ -6163,7 +6355,7 @@ function init_draw_menu(buttons){
         	window.playerDrawUndo.splice(window.playerDrawUndo.length-1, 1)
 		    redraw_drawn_light();
             redraw_drawings()
-			sync_drawings(false)
+			sync_drawings({newDraw: false})
         }
         else{
 	        while (currentElement--) {
@@ -6171,7 +6363,7 @@ function init_draw_menu(buttons){
 	                window.DRAWINGS.splice(currentElement, 1)
 	                redraw_drawn_light();
 	                redraw_drawings()
-					sync_drawings()
+					sync_drawings({newDraw: false})
 	                break
 	            }
 	        }
@@ -6193,7 +6385,6 @@ function init_draw_menu(buttons){
 }
 function init_walls_menu(buttons){
 	let wall_menu = $("<div id='wall_menu' class='top_menu'></div>");
-
 	wall_menu.append(
 		`<div class='ddbc-tab-options--layout-pill'>
 			<button id='draw_line' class='drawbutton menu-option  ddbc-tab-options__header-heading'
@@ -6201,41 +6392,52 @@ function init_walls_menu(buttons){
 					Draw Wall
 			</button>
 		</div>`);
+	const circularPolyDesc = `Draw a circular/arc polygon by clicking 3 points. First for starting point, second for size, third for arc length up to a full circle.`;
 	wall_menu.append(
-	`<div class='ddbc-tab-options--layout-pill'>
+	`<div class='ddbc-tab-options--layout-pill' data-desc="${circularPolyDesc}">
+		<button id='draw_line' class='drawbutton menu-option  ddbc-tab-options__header-heading'
+			data-shape='3pointRound' data-function="wall" data-unique-with="draw">
+				CircularPoly
+		</button>
+	</div>`);
+	const rectDesc = `Draw 4 walls in the shape of rectangle by dragging from one corner to the opposite corner.`;
+	wall_menu.append(
+	`<div class='ddbc-tab-options--layout-pill' data-desc="${rectDesc}">
 		<button id='draw_line' class='drawbutton menu-option  ddbc-tab-options__header-heading'
 			data-shape='rect' data-function="wall" data-unique-with="draw">
 				Rect Wall
 		</button>
 	</div>`);
+	const pointRectDesc = `Draw 4 walls in the shape of a parallelogram by clicking 3 corners.`;
 	wall_menu.append(
-	`<div class='ddbc-tab-options--layout-pill'>
+	`<div class='ddbc-tab-options--layout-pill' data-desc="${pointRectDesc}">
 		<button id='draw_line' class='drawbutton menu-option  ddbc-tab-options__header-heading'
 			data-shape='3pointRect' data-function="wall" data-unique-with="draw">
 				3p Rect
 		</button>
 	</div>`);
+	
+	const heightConvertDesc = `Changes the base/top of all walls in a selected area to values below.`
 	wall_menu.append(
-	`<div class='ddbc-tab-options--layout-pill'>
-		<button id='draw_line' class='drawbutton menu-option  ddbc-tab-options__header-heading'
-			data-shape='line' data-function="wall" data-type="terrain" data-unique-with="draw">
-				Object Wall
-		</button>
-	</div>`);
-	wall_menu.append(
-		`<div class='ddbc-tab-options--layout-pill menu-option data-skip='true''>
+		`<div class='ddbc-tab-options--layout-pill menu-option' data-desc="${heightConvertDesc}">
 			<button id='draw_height_convert' class='drawbutton menu-option  ddbc-tab-options__header-heading'
 				data-shape='rect' data-function="wall-height-convert" data-unique-with="draw">
 				 	Height Convert
 			</button>
 		</div>`);
-	wall_menu.append("<div class='wall-input menu-subtitle'>Wall Base</div>");
+			const wallBaseDesc = `Sets the elevation of the base of the wall. 
+Any token with elevation below this height will be able to see under the wall.
+When left blank it is treated as negative infinity, preventing tokens from seeing under the wall.`
+	wall_menu.append(`<div class='wall-input menu-subtitle' data-desc='${wallBaseDesc}'>Wall Base</div>`);
 	wall_menu.append(
 		`<div>
 			<input id='wall_base_height' type='number' step='5' data-required="wall_base_height" style='width:90%'
 			value='' >
 		</div>`);
-	wall_menu.append("<div class='wall-input menu-subtitle'>Wall Top</div>");
+	const wallTopDesc = `Sets the elevation of the top of the wall. 
+Any token with elevation above this height will be able to see over the wall.
+When left blank it is treated as infinity, preventing tokens from seeing over the wall.`		
+	wall_menu.append(`<div class='wall-input menu-subtitle' data-desc='${wallTopDesc}'>Wall Top</div>`);
 	wall_menu.append(
 		`<div>
 			<input id='wall_top_height' type='number' step='5' data-required="wall_top_height" style='width:90%'
@@ -6252,59 +6454,87 @@ function init_walls_menu(buttons){
             </select>
         </div>
             `)
-
 	wall_menu.append(
-	`<div class='ddbc-tab-options--layout-pill menu-option data-skip='true''>
+	`<div class='ddbc-tab-options--layout-pill menu-option'>
 		<button id='draw_door' class='drawbutton menu-option  ddbc-tab-options__header-heading'
 			data-shape='line' data-function="wall-door" data-unique-with="draw">
 			 	Draw Selected
 		</button>
 	</div>`);
+	const wallToDesc = `A section of wall in the selected area will be converted to a door of the selected type.`		
 	wall_menu.append(
-		`<div class='ddbc-tab-options--layout-pill menu-option data-skip='true''>
+		`<div class='ddbc-tab-options--layout-pill menu-option' data-desc="${wallToDesc}">
 			<button id='draw_door_erase' class='drawbutton menu-option  ddbc-tab-options__header-heading'
 				data-shape='rect' data-function="wall-door-convert" data-unique-with="draw">
 				 	Wall>Selected
 			</button>
 		</div>`);
+	const doorCovertDesc = `Doors (any type) in the selected area will be converted to the selected door type.`	
 	wall_menu.append(
-		`<div class='ddbc-tab-options--layout-pill menu-option data-skip='true''>
-			<button id='draw_door_hidden' class='drawbutton menu-option  ddbc-tab-options__header-heading'
-				data-shape='line' data-function="wall-door" data-unique-with="draw" data-hidden="true">
-				 	Hidden Icon
-			</button>
-		</div>`);
-	wall_menu.append(
-		`<div class='ddbc-tab-options--layout-pill menu-option data-skip='true''>
+		`<div class='ddbc-tab-options--layout-pill menu-option' data-desc="${doorCovertDesc}">
 			<button id='draw_door_convert' class='drawbutton menu-option  ddbc-tab-options__header-heading'
 				data-shape='rect' data-function="door-door-convert" data-unique-with="draw">
 				 	Door Convert
 			</button>
 		</div>`);
 	wall_menu.append("<div class='menu-subtitle'>Controls</div>");
+	const snapDesc = `Toggle to snap wall drawing to other nearby wall end points. This overrides grid snapping if enabled.`	
 	wall_menu.append(
-		`<div class='ddbc-tab-options--layout-pill menu-option data-skip='true''>
+		`<div class='ddbc-tab-options--layout-pill menu-option' data-desc="${snapDesc}">
+			<button id='snap_walls' data-key="snap_walls" data-value="true" data-toggle='true' class='drawbutton menu-option ddbc-tab-options__header-heading ${(window.snapWallsToggle) ? "button-enabled" : ''}'>
+				Join Snap
+			</button>
+		</div>`);
+		const objectWallDesc = `Toggle to draw Object Walls in place of regular walls. Object walls block vision at the 2nd wall of this type hit. Does not prevent movement into visible area.
+
+Example usage: 
+
+• Objects where you want art visible but don't want players seeing past, like a statue or foilage like bushes. 
+
+• Drawing a 1 grid width area around the edge of a cliff, this allows those below to see the edge and only those standing at the edge to see down.
+`
+	wall_menu.append(
+	`<div class='ddbc-tab-options--layout-pill' data-desc="${objectWallDesc}">
+		<button id='object_wall' class='drawbutton menu-option  ddbc-tab-options__header-heading'
+			data-key="object_wall" data-value="terrain" data-toggle='true'>
+				Object Wall
+		</button>
+	</div>`);
+	const hiddenIconsDesc = `Toggle that makes the icon of drawn doors (any type) hidden to both DM and Player. DM's can still see and access them when walls are shown.`
+	wall_menu.append(
+		`<div class='ddbc-tab-options--layout-pill menu-option' data-desc="${hiddenIconsDesc}">
+			<button id='draw_door_hidden' class='drawbutton menu-option  ddbc-tab-options__header-heading'
+				data-key="hidden_icon" data-toggle="true" data-value="true">
+				 	Hidden Icons
+			</button>
+		</div>`);
+	const editWallDesc = `Select wall points to edit. Once selected you can drag to move them or shift+drag to scale them.`
+	wall_menu.append(
+		`<div class='ddbc-tab-options--layout-pill menu-option' data-desc="${editWallDesc}">
 			<button id='edit_wall' class='drawbutton menu-option  ddbc-tab-options__header-heading'
 				data-shape='rect' data-function="wall-edit" data-unique-with="draw">
 				 	Edit Points
 			</button>
 		</div>`);
+	const eraseLineDesc = `Erases all wall lines in a selected area. Only part of a line must be in the selection area.`	
 	wall_menu.append(
-		`<div class='ddbc-tab-options--layout-pill menu-option data-skip='true''>
+		`<div class='ddbc-tab-options--layout-pill menu-option' data-desc="${eraseLineDesc}">
 			<button id='draw_erase' class='drawbutton menu-option  ddbc-tab-options__header-heading'
 				data-shape='rect' data-function="wall-eraser-one" data-unique-with="draw">
 				 	Erase Line
 			</button>
 		</div>`);
+	const eraseAreaDesc = `Erases sections of walls in a selected area.`	
 	wall_menu.append(
-		`<div class='ddbc-tab-options--layout-pill menu-option data-skip='true''>
+		`<div class='ddbc-tab-options--layout-pill menu-option' data-desc="${eraseAreaDesc}">
 			<button id='draw_erase' class='drawbutton menu-option  ddbc-tab-options__header-heading'
 				data-shape='rect' data-function="wall-eraser" data-unique-with="draw">
 				 	Erase Area
 			</button>
 		</div>`);
+	const showWallsDesc = `With this toggled the walls will remain visible to you with the walls menu closed (Shift+W). This allows you to interact with doors that have hidden icons or just see the walls when using other tools.`
 	wall_menu.append(
-		`<div class='ddbc-tab-options--layout-pill menu-option data-skip='true''>
+		`<div class='ddbc-tab-options--layout-pill menu-option' data-skip="true" data-desc="${showWallsDesc}">
 			<button id='show_walls' data-toggle='true' class='drawbutton menu-option ddbc-tab-options__header-heading ${(window.showWallsToggle) ? "button-enabled" : ''}'>
 				Always Show
 			</button>
@@ -6333,10 +6563,13 @@ function init_walls_menu(buttons){
 					window.TOKEN_OBJECTS[token].delete(true);
 				}
 			}
-			redraw_light_walls();
-			redraw_drawn_light();
+			redraw_light_walls({wallsChanged: true});
+			redraw_drawn_light(); // could limit this to point line of sight tool drawings
+			redraw_drawings(); // could limit this to point line of sight tool drawings
+			redraw_fog(); // could limit this to point line of sight tool drawings
+			redraw_elev(); // could limit this to point line of sight tool drawings
 			redraw_light();
-			sync_drawings();
+			sync_drawings({wallsChanged: true});
 		}
 	});
 	wall_menu.find("#wall_undo").click(function() {
@@ -6367,10 +6600,13 @@ function init_walls_menu(buttons){
 	        if(wallUndo.selectedWalls != undefined){
 	        	window.selectedWalls = [...wallUndo.selectedWalls]
 	        }
-          	redraw_light_walls();
-	        redraw_drawn_light();
+          	redraw_light_walls({wallsChanged: true});
+	        redraw_drawn_light(); // could limit this to point line of sight tool drawings
+			redraw_drawings(); // could limit this to point line of sight tool drawings
+			redraw_fog(); // could limit this to point line of sight tool drawings
+			redraw_elev(); // could limit this to point line of sight tool drawings
 	        redraw_light();
-			sync_drawings();
+			sync_drawings({wallsChanged: true});
         }   
 	});
 
@@ -6437,7 +6673,7 @@ function init_elev_menu(buttons){
 		</div>`)
 	elev_menu.append("<div class='menu-subtitle'>Controls</div>");
 	elev_menu.append(
-	`<div class='ddbc-tab-options--layout-pill menu-option data-skip='true''>
+	`<div class='ddbc-tab-options--layout-pill menu-option' data-skip='true'>
 		<button id='show_elev' data-toggle='true' class='drawbutton menu-option ddbc-tab-options__header-heading'>
 			Always Show
 		</button>
@@ -6476,7 +6712,7 @@ function init_elev_menu(buttons){
             if (window.DRAWINGS[currentElement][1] == 'elev'){
                 window.DRAWINGS.splice(currentElement, 1)
                 redraw_elev();
-                redraw_light_walls();
+                redraw_light_walls(); 
 		        redraw_drawn_light();
 		        redraw_light();
 				sync_drawings()
@@ -6505,6 +6741,138 @@ function init_elev_menu(buttons){
 }
 
 function init_vision_menu(buttons){
+	function create_los_light_presets_edit() {
+		let dialog = $('#edit_preset_light_dialog')
+
+		dialog.remove();
+		dialog = $(`<div id='edit_preset_light_dialog'></div>`);
+
+
+
+		let upsq = 'ft';
+		if (window.CURRENT_SCENE_DATA.upsq !== undefined && window.CURRENT_SCENE_DATA.upsq.length > 0) {
+			upsq = window.CURRENT_SCENE_DATA.upsq;
+		}
+		let light_presets = $('<table id="light_presets_properties"/>');
+		dialog.append(light_presets);
+
+		let titleRow = $(`
+		<tr class='light_preset_title_row'>
+				<th>
+					Name
+				</th>
+				<th>
+					Inner Light	
+				</th>
+				<th>
+					Outer Light	
+				</th>
+				<th>
+					Blur
+				</th>
+				<th>
+					Color
+				</th>
+				<th>
+				</th>
+			</tr>
+			`)
+		light_presets.append(titleRow);
+		for (let i = 0; i < LOS_PRESETS.length; i++) {
+			let row = $(`
+			<tr class='light_preset_row' data-index='${i}'>
+				<td>
+					<input class='light_preset_title' value='${LOS_PRESETS[i].name}'></input>
+				</td>
+				<td class="menu-inner-light" style='width:20%'>
+					<div class="token-image-modal-footer-select-wrapper" style="padding-left: 2px">
+						<div class="token-image-modal-footer-title">Radius (${upsq})</div>
+						<input class="light-radius" name="light1" type="text" value="${(LOS_PRESETS[i].light1?.feet) ? LOS_PRESETS[i].light1.feet : ``}" style="width: 3rem" />
+					</div>
+
+				</td>
+				<td class="menu-outer-light"style='width:20%'>
+					<div class="token-image-modal-footer-select-wrapper" style="padding-left: 2px">
+						<div class="token-image-modal-footer-title">Radius (${upsq})</div>
+						<input class="light-radius" name="light2" type="text" value="${(LOS_PRESETS[i].light2?.feet) ? LOS_PRESETS[i].light2.feet : ``}" style="width: 3rem" />
+					</div>
+	
+				</td>
+				<td class="menu-outer-light">
+					<div class="token-image-modal-footer-select-wrapper" style="padding-left: 2px;display: flex;justify-content: center;">
+						<input style='width:3rem' type='number' min='0' step='1' class="light-blur" name="blur" value="${(LOS_PRESETS[i].blur) ? LOS_PRESETS[i].blur : 0}">
+					</div>
+				</td>
+				<td class="menu-outer-light" style="width:3rem">
+					<div class="token-image-modal-footer-select-wrapper" style="padding-left: 2px">
+						<input class="spectrum" name="light1Color" value="${(LOS_PRESETS[i].light1?.color) ? LOS_PRESETS[i].light1.color : `rgba(0, 0, 0, 0)`}" >
+					</div>
+				</td>
+				<td><div class='removePreset'><svg class="" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><g transform="rotate(-45 50 50)"><rect></rect></g><g transform="rotate(45 50 50)"><rect></rect></g></svg></div></td>
+			</tr>
+		`)
+			row.find('input.light_preset_title').off('change.name').on('change.name', function () {
+				LOS_PRESETS[i].name = $(this).val().replaceAll(/['"<>]/g, '');
+				localStorage.setItem('LOS_PRESETS', JSON.stringify(LOS_PRESETS));
+				setPresetSelectOptions();
+			})
+			row.find('input[class*="radius"]').off('change.radius').on('change.radius', function () {
+				let lightname = $(this).attr('name');
+				LOS_PRESETS[i][lightname].feet = $(this).val();
+				localStorage.setItem('LOS_PRESETS', JSON.stringify(LOS_PRESETS));
+			})
+			row.find('input[class*="blur"]').off('change.blur').on('change.blur', function () {
+				LOS_PRESETS[i].blur = $(this).val();
+				localStorage.setItem('LOS_PRESETS', JSON.stringify(LOS_PRESETS));
+			})
+			row.find('.removePreset').off('click.removePreset').on('click.removePreset', function () {
+				LOS_PRESETS.splice(i, 1);
+				localStorage.setItem('LOS_PRESETS', JSON.stringify(LOS_PRESETS));
+				create_los_light_presets_edit();
+				setPresetSelectOptions();
+			})
+			let colorPickers = row.find('input.spectrum');
+			colorPickers.spectrum({
+				type: "color",
+				showInput: true,
+				showInitial: true,
+				containerClassName: 'prevent-sidebar-modal-close',
+				clickoutFiresChange: true,
+				appendTo: "parent"
+			});
+
+			const colorPickerChange = function (e, tinycolor) {
+				let lightName = e.target.name.replace("Color", "");
+				LOS_PRESETS[i][lightName].color = `rgba(${tinycolor._r}, ${tinycolor._g}, ${tinycolor._b}, ${tinycolor._a})`;
+				console.log(lightName, e, tinycolor);
+				localStorage.setItem('LOS_PRESETS', JSON.stringify(LOS_PRESETS));
+			};
+			colorPickers.on('move.spectrum', colorPickerChange);   // update the token as the player messes around with colors
+			colorPickers.on('change.spectrum', colorPickerChange); // commit the changes when the user clicks the submit button
+			colorPickers.on('hide.spectrum', colorPickerChange);   // the hide event includes the original color so let's change it back when we get it
+
+			light_presets.append(row);
+
+		}
+
+		let addButton = $(`<div id='addAuraPreset'>+</div>`)
+
+		addButton.off('click.addPreset').on('click.addPreset', function () {
+			LOS_PRESETS.push({
+				name: 'New Preset',
+				light1: {
+				},
+				light2: {
+				}
+			});
+			localStorage.setItem('LOS_PRESETS', JSON.stringify(LOS_PRESETS));
+			create_los_light_presets_edit();
+			setPresetSelectOptions();
+		});
+		light_presets.append(addButton);
+
+		adjust_create_import_edit_container(dialog, undefined, undefined, 975);
+	}
 	let vision_menu = $("<div id='vision_menu' class='top_menu'></div>");
 
 	vision_menu.append(
@@ -6573,6 +6941,102 @@ function init_vision_menu(buttons){
 		</div>`);
 
 	let bucket_menu = $(`<div id='bucket_menu'></div>`);
+    let LOS_PRESETS = [];
+	if (localStorage.getItem('LOS_PRESETS') == null) {
+		LOS_PRESETS = [
+			{
+				name: 'Candle (5/5)',
+				light1: {
+					feet: '5',
+					color: 'rgba(255, 255, 255, 1)'
+				},
+				light2: {
+					feet: '5'
+				},
+				blur: '5'
+			},
+			{
+				name: 'Torch (20/20)',
+				light1: {
+					feet: '20',
+					color: 'rgba(255, 255, 255, 1)'
+				},
+				light2: {
+					feet: '20'
+				},
+				blur: '20'
+			},
+			{
+				name: 'Lamp (15/30)',
+				light1: {
+					feet: '15',
+					color: 'rgba(255, 255, 255, 1)'
+				},
+				light2: {
+					feet: '30'
+				},
+				blur: '15'
+			},
+			{
+				name: 'Lantern (30/30)',
+				light1: {
+					feet: '30',
+					color: 'rgba(255, 255, 255, 1)'
+				},
+				light2: {
+					feet: '30'
+				},
+				blur: '30'
+			},
+		]
+	}
+	else {
+		LOS_PRESETS = JSON.parse(localStorage.getItem('LOS_PRESETS'));
+	}
+	const presetSelect = $(`<select></select >`)
+	function setPresetSelectOptions() {
+		presetSelect.empty();
+		presetSelect.append(`<option value=""></option>`)
+		for (let i = 0; i < LOS_PRESETS.length; i++) {
+			presetSelect.append(`<option value="${LOS_PRESETS[i].name}">${LOS_PRESETS[i].name}</option>`)
+		}
+	}
+	setPresetSelectOptions();
+	bucket_menu.append(`<div class='menu-subtitle'>Presets: <button id="edit_los_preset">Edit</button></div>`);
+	bucket_menu.find(`#edit_los_preset`).off('click.editPresets').on('click.editPresets', function () {
+		create_los_light_presets_edit();
+	})
+
+	const presetContainer = $('<div>').append(presetSelect);
+	bucket_menu.append(presetContainer);
+	presetSelect.on("change", function (e) {
+
+		let preset = e.target.value;
+		let selectedPreset = LOS_PRESETS.filter(d => d.name == preset)[0]
+
+		if (!selectedPreset) {
+			console.warn("somehow got an unexpected preset", preset, e);
+			return;
+		}
+
+		if (selectedPreset.light1.feet) {
+			bucket_menu.find("#bucket_radius1").val(selectedPreset.light1.feet);
+		}
+
+		if (selectedPreset.light2.feet) {
+			bucket_menu.find("#bucket_radius2").val(selectedPreset.light2.feet);
+		}
+
+		if (selectedPreset.light1.color) {
+			vision_menu.find("input#background_color").spectrum("set", selectedPreset.light1.color);
+			const colorData = vision_menu.find('#background_color').spectrum('get');
+			vision_menu.find('#background_color').val(`rgba(${colorData._r}, ${colorData._g}, ${colorData._b}, ${colorData._a})`);
+			vision_menu.find('#daylightbutton-enabled').click();
+		}
+		if (selectedPreset.blur) {
+			vision_menu.find("#draw_line_hardness").val(selectedPreset.blur);
+		}
+	});
 	bucket_menu.append(`<div class='menu-subtitle'>Inner Radius (${window.CURRENT_SCENE_DATA.upsq})</div>`);
 	bucket_menu.append(`
 		<div>
@@ -7065,7 +7529,8 @@ function particleLook(ctx, walls, lightRadius=100000, fog=false, fogStyle, fogTy
 			isDarkness: isDarkness,
 			doorId: doorId,
 			tokenId: currWall.tokenId
-		});
+		})
+		
 	}
 	
 
@@ -7113,12 +7578,10 @@ function particleLook(ctx, walls, lightRadius=100000, fog=false, fogStyle, fogTy
 				const recordLightFurtherThanNeed = Math.abs(recordLight - dist) > diffNeedForTerrainWalls;
 				const recordNoDarknessFurtherThanNeed = Math.abs(recordNoDarkness - dist) > diffNeedForTerrainWalls;
 				const recordMoveFurtherThanNeed = Math.abs(recordMove - dist) > diffNeedForTerrainWalls;
-
 				
 
 				if (dist < recordLight && wallData.blocksVision) {
-				  	if(!tokenIsDoor || auraId != wallData.doorId)
-						{
+				  	if(!tokenIsDoor || auraId != wallData.doorId) {
 						
 						if(recordLightFurtherThanNeed)
 							secondRecordLight = recordLight;
@@ -7154,16 +7617,12 @@ function particleLook(ctx, walls, lightRadius=100000, fog=false, fogStyle, fogTy
 			   		
 		      		secondClosestLight = pt;
 
-			           
-		        	
-	        		secondClosestWall = currWall;	
-			        
+	        		secondClosestWall = currWall;			        
 				}
 
 				if(canSeeDarkness === true && !wallData.isDarkness){
 					if (dist < recordNoDarkness && wallData.blocksVision) {
-				      	if(!tokenIsDoor || auraId != wallData.doorId)
-						{
+				      	if(!tokenIsDoor || auraId != wallData.doorId) {
 							if(recordNoDarknessFurtherThanNeed)
 								secondRecordNoDarkness = recordNoDarkness;
 				          	recordNoDarkness = dist;         
@@ -7186,8 +7645,7 @@ function particleLook(ctx, walls, lightRadius=100000, fog=false, fogStyle, fogTy
 			       		}
 			   	 	}
 					else if (dist < secondRecordNoDarkness && wallData.blocksVision && recordNoDarknessFurtherThanNeed) {
-	   	 		      	if(!tokenIsDoor || auraId != wallData.doorId)
-	   	 				{
+	   	 		      	if(!tokenIsDoor || auraId != wallData.doorId) {
 	   	 					secondRecordNoDarkness = dist;       
 	   	 		          	
 							if (dist == squaredRadius){
@@ -7212,8 +7670,7 @@ function particleLook(ctx, walls, lightRadius=100000, fog=false, fogStyle, fogTy
 				    	if(recordMoveFurtherThanNeed)
 				    		secondRecordMove = recordMove;
 				    	recordMove = dist;
-			    		if(!tokenIsDoor || auraId != wallData.doorId)
-						{
+						if(!tokenIsDoor || auraId != wallData.doorId) {
 							if (dist == squaredRadius){
 					          	pt = {
 						          	x: particlePosX + ray.dir.x * lightRadius,
@@ -7232,8 +7689,7 @@ function particleLook(ctx, walls, lightRadius=100000, fog=false, fogStyle, fogTy
 				    }
 				    else if(dist < secondRecordMove && recordMoveFurtherThanNeed){
 				    	secondRecordMove = dist;
-			    		if(!tokenIsDoor || auraId != wallData.doorId)
-						{
+			    		if(!tokenIsDoor || auraId != wallData.doorId) {
 							if (dist == squaredRadius){
 					          	pt = {
 						          	x: particlePosX + ray.dir.x * lightRadius,
@@ -7323,55 +7779,14 @@ function particleLook(ctx, walls, lightRadius=100000, fog=false, fogStyle, fogTy
 	   
 
 	}
-  	if(draw === true){
-		if(!fog){
-			  drawPolygon(ctx, lightPolygon, 'rgba(255, 255, 255, 1)', true);
-		}
-		else{	
-			if(fogType === 0){
-				clearPolygon(ctx, lightPolygon);
-			}
-			else{
-				if(!islight){
-					clearPolygon(ctx, lightPolygon, undefined, true);
-					drawPolygon(ctx, lightPolygon, fogStyle, undefined, undefined, undefined, undefined, undefined, true);
-				}
-				else {
-					
-					if(auraId !== undefined){
-						const canvasWidth = getSceneMapSize().sceneWidth;
-						const canvasHeight = getSceneMapSize().sceneHeight;
-
-
-						const isBlur = parseInt(blur) > 0;
-						combineCtx = window.offScreenCombineContext;
-						combineCtx.clearRect(0, 0, canvasWidth, canvasHeight);
-						combineCtx.globalCompositeOperation = "source-over";
-
-
-						combineCtx.filter = isBlur ? `blur(${parseInt(blur)}px)` : `none`;
-						drawPolygon(combineCtx, lightPolygon, fogStyle, true);
-
-						if (isBlur) {
-							combineCtx.filter = `none`;
-							combineCtx.globalCompositeOperation = "destination-in";
-							drawPolygon(combineCtx, lightPolygon, "#000", true);
-						}
-
-						combineCtx.globalCompositeOperation = "destination-out";
-						drawPolygon(combineCtx, lightPolygon, "#000", false, 10);
-						ctx.save();
-						ctx.globalCompositeOperation = 'lighten';
-						ctx.drawImage(window.offScreenCombine, 0, 0);
-						ctx.restore();
-						return;
-					}
-					ctx.filter = `none`;
-					ctx.globalCompositeOperation = "destination-in";
-					drawPolygon(ctx, lightPolygon, "#000", true);
-				}	
-			}
-		}
+  	if(draw === true){	
+		//used for fog and other non-light drawings only now
+		if(fogType === 0){
+			clearPolygon(ctx, lightPolygon);
+		} else{
+			clearPolygon(ctx, lightPolygon, undefined, true);
+			drawPolygon(ctx, lightPolygon, fogStyle, undefined, undefined, undefined, undefined, undefined, true);
+		}	
 	} 	
 	
 	window.lightPolygon = lightPolygon;
@@ -7430,18 +7845,32 @@ function lineLine(x1, y1, x2, y2, x3, y3, x4, y4) {
 function detectInLos(x, y) {
 	let canvas = window.moveOffscreenCanvasMask;
 	let ctx = canvas.getContext("2d");
-	const pixeldata = ctx.getImageData((x-5)/window.CURRENT_SCENE_DATA.scale_factor, (y-5)/window.CURRENT_SCENE_DATA.scale_factor, 10, 10).data;
-
+	const pixeldata = ctx.getImageData(x/window.CURRENT_SCENE_DATA.scale_factor, y/window.CURRENT_SCENE_DATA.scale_factor, 1, 1).data;
 
 	for(let i=0; i<pixeldata.length; i+=4){
 		if(pixeldata[i] <= 5)
 			return false;
 	}
 	return true;
-	
 }
-	
+/*This is used to clip light circles, if we want to allow clipping in other drawings places we'll have to add a drawn scale similar to drawPolygon*/
+function clip_circle_with_polygon(ctx, x, y, radius, color, polygon) {
+	ctx.save();
 
+	ctx.beginPath();
+	let adjustScale = window.CURRENT_SCENE_DATA.scale_factor;
+
+	ctx.moveTo(polygon[0].x/adjustScale, polygon[0].y/adjustScale);
+	for (let i = 1; i < polygon.length; i++) {
+		const p = polygon[i];
+		ctx.lineTo(p.x/adjustScale, p.y/adjustScale);
+	}
+	ctx.closePath();
+	ctx.clip();
+	drawCircle(ctx, x, y, radius, color);
+
+	ctx.restore();
+}
 
 function redraw_light(darknessMoved = false, limitActiveRays = 0) {
 	const canvasWidth = getSceneMapSize().sceneWidth;
@@ -7463,9 +7892,6 @@ function redraw_light(darknessMoved = false, limitActiveRays = 0) {
 	if(window.PARTICLE == undefined){
 		initParticle(new Vector(200, 200), 1);
 	}
-
-
-	const combineCtx = window.offScreenCombine.getContext("2d");
 
 
 	const offscreenCanvasMask = window.offscreenCanvasMask;
@@ -7593,7 +8019,7 @@ function redraw_light(darknessMoved = false, limitActiveRays = 0) {
 				.map(p => `${p.x / adjustScale}px ${p.y / adjustScale}px`)
 				.join(', ');
 
-		
+
 
 			window.lineOfSightPolygons[auraId] = {
 				polygon: window.lightPolygon,
@@ -7623,6 +8049,7 @@ function redraw_light(darknessMoved = false, limitActiveRays = 0) {
 				window.lightAuraClipPolygon = {};
 			}
 			clipped_light(auraId, window.lightPolygon, playerTokenId, canvasWidth, canvasHeight, darknessBoundarys, selectedIds.length);
+
 		}
 
 		let drawDarkVision = false;
@@ -7635,28 +8062,12 @@ function redraw_light(darknessMoved = false, limitActiveRays = 0) {
 			if (!hideVisionWhenNoPlayerToken && !hideVisionWhenPlayerTokenExists) {
 				//when player token does not exist show vision for all pc tokens and shared vision for other tokens. Mostly used by DM's, streams and tabletop tv games.
 				//when player token does exist show your own vision and shared vision.
-				if (window.DM !== true || window.SelectedTokenVision === true) {
-
-					if (window.lightAuraClipPolygon[auraId] != undefined && (window.TOKEN_OBJECTS[auraId].options.sight === 'devilsight' || window.TOKEN_OBJECTS[auraId].options.sight === 'truesight')) {
-						combineCtx.clearRect(0, 0, canvasWidth, canvasHeight);
-						combineCtx.globalCompositeOperation = 'source-over';
-						drawCircle(combineCtx, window.lightAuraClipPolygon[auraId].middle.x, window.lightAuraClipPolygon[auraId].middle.y, window.lightAuraClipPolygon[auraId].darkvision, window.lightAuraClipPolygon[auraId].vision.color)
-						combineCtx.globalCompositeOperation = 'destination-in';
-						drawPolygon(combineCtx, window.noDarknessPolygon, 'rgba(255, 255, 255, 1)', true);
-						combineCtx.globalCompositeOperation = "destination-out";
-						drawPolygon(combineCtx, window.lightPolygon, "#000", false, 10);
-						offscreenContext.globalCompositeOperation = 'source-over';
-						offscreenContext.drawImage(offScreenCombine, 0, 0)
-					}
-					if (window.TOKEN_OBJECTS[auraId].options.sight === 'devilsight') {
-						devilsightCanvasContext.globalCompositeOperation = 'source-over';
-						devilsightCanvasContext.drawImage(offScreenCombine, 0, 0);
-					}
+				
+				if (window.noDarknessPolygon?.length>1 && (window.DM !== true || window.SelectedTokenVision === true) && (window.TOKEN_OBJECTS[auraId].options.sight === 'truesight' || window.TOKEN_OBJECTS[auraId].options.sight === 'devilsight')) {					
+					clip_circle_with_polygon(devilsightCanvasContext, window.lightAuraClipPolygon[auraId].middle.x, window.lightAuraClipPolygon[auraId].middle.y, window.lightAuraClipPolygon[auraId].darkvision, '#fff', window.noDarknessPolygon)
 					if (window.TOKEN_OBJECTS[auraId].options.sight === 'truesight') {
-						truesightCanvasContext.globalCompositeOperation = 'source-over';
-						truesightCanvasContext.drawImage(offScreenCombine, 0, 0);
+						clip_circle_with_polygon(truesightCanvasContext, window.lightAuraClipPolygon[auraId].middle.x, window.lightAuraClipPolygon[auraId].middle.y, window.lightAuraClipPolygon[auraId].darkvision, '#fff', window.noDarknessPolygon)
 					}
-
 				}
 
 				if (window.lightAuraClipPolygon[auraId]?.darkvision !== undefined) {
@@ -7664,30 +8075,24 @@ function redraw_light(darknessMoved = false, limitActiveRays = 0) {
 				}
 
 				$(`.aura-element-container-clip[id='${auraId}'] [id*='vision_']`).toggleClass('notVisible', false);
-				offscreenContext.globalCompositeOperation = "lighten";
-				drawPolygon(offscreenContext, window.lightPolygon, 'rgba(255, 255, 255, 1)', true, 6, undefined, undefined, undefined, true, true); //draw to offscreen canvas so we don't have to render every draw and use this for a mask	
-				drawPolygon(moveOffscreenCanvasMaskContext, window.movePolygon, 'rgba(255, 255, 255, 1)', true, 6, undefined, undefined, undefined, true, true); //draw to offscreen canvas so we don't have to render every draw and use this for a mask
-
+			
+				drawPolygon(offscreenContext, window.lightPolygon, 'rgba(255, 255, 255, 1)', true, 2, undefined, undefined, undefined, true, true); //draw to offscreen canvas so we don't have to render every draw and use this for a mask	
+				drawPolygon(moveOffscreenCanvasMaskContext, window.movePolygon, 'rgba(255, 255, 255, 1)', true, 0, undefined, undefined, undefined, true, true); //draw to offscreen canvas so we don't have to render every draw and use this for a mask
 			}
 		}
 		if (drawDarkVision || window.lightAuraClipPolygon[auraId]?.light !== undefined) {
-			combineCtx.clearRect(0, 0, canvasWidth, canvasHeight);
-			combineCtx.globalCompositeOperation = 'lighten';
+			lightInLosContext.globalCompositeOperation='lighten';
 			if (window.lightAuraClipPolygon[auraId]?.light !== undefined) {
-				drawCircle(combineCtx, window.lightAuraClipPolygon[auraId].middle.x, window.lightAuraClipPolygon[auraId].middle.y, window.lightAuraClipPolygon[auraId].light2.range, window.lightAuraClipPolygon[auraId].light2.color)
-				drawCircle(combineCtx, window.lightAuraClipPolygon[auraId].middle.x, window.lightAuraClipPolygon[auraId].middle.y, window.lightAuraClipPolygon[auraId].light1.range, window.lightAuraClipPolygon[auraId].light1.color)
+				clip_circle_with_polygon(lightInLosContext, window.lightAuraClipPolygon[auraId].middle.x, window.lightAuraClipPolygon[auraId].middle.y, window.lightAuraClipPolygon[auraId].light2.range, window.lightAuraClipPolygon[auraId].light2.color, window.lightPolygon);
+				clip_circle_with_polygon(lightInLosContext, window.lightAuraClipPolygon[auraId].middle.x, window.lightAuraClipPolygon[auraId].middle.y, window.lightAuraClipPolygon[auraId].light1.range, window.lightAuraClipPolygon[auraId].light1.color, window.lightPolygon);
 			}
 			if(drawDarkVision){
-				drawCircle(combineCtx, window.lightAuraClipPolygon[auraId].middle.x, window.lightAuraClipPolygon[auraId].middle.y, window.lightAuraClipPolygon[auraId].darkvision, window.lightAuraClipPolygon[auraId].vision.color);
+				clip_circle_with_polygon(lightInLosContext, window.lightAuraClipPolygon[auraId].middle.x, window.lightAuraClipPolygon[auraId].middle.y, window.lightAuraClipPolygon[auraId].darkvision, window.lightAuraClipPolygon[auraId].vision.color, window.lightPolygon);
 			}
-			combineCtx.globalCompositeOperation = 'destination-in';
-			drawPolygon(combineCtx, window.lightPolygon, "#FFF", true);
-			combineCtx.globalCompositeOperation = "destination-out";
-			drawPolygon(combineCtx, window.lightPolygon, "#000", false, 10);		
-			lightInLosContext.globalCompositeOperation = "lighten";
-			lightInLosContext.drawImage(offScreenCombine, 0, 0);
 		}
 	}
+	offscreenContext.globalCompositeOperation = "source-over";
+	offscreenContext.drawImage(devilsightCanvas, 0, 0);
 
 	const tokenObjectValues = Object.values(window.TOKEN_OBJECTS);
 	const aPlayerTokenExists = tokenObjectValues.some(d => d.options.id.startsWith('/profile'))
@@ -7715,9 +8120,6 @@ function redraw_light(darknessMoved = false, limitActiveRays = 0) {
 	
 			lightInLosContext.globalCompositeOperation='source-over';	
 			lightInLosContext.drawImage(devilsightCanvas, 0, 0);		
-
-			truesightCanvasContext.globalCompositeOperation='destination-in';
-			truesightCanvasContext.drawImage(offscreenCanvasMask, 0, 0);
 		}
 	}
 	if(window.CURRENT_SCENE_DATA.darkness_filter != 0){
@@ -7729,10 +8131,6 @@ function redraw_light(darknessMoved = false, limitActiveRays = 0) {
 
 			lightInLosContext.globalCompositeOperation='source-over';
 			lightInLosContext.drawImage(devilsightCanvas, 0, 0);
-
-			
-			truesightCanvasContext.globalCompositeOperation='destination-in';
-			truesightCanvasContext.drawImage(offscreenCanvasMask, 0, 0);	
 		}
 		
 		lightInLosContext.globalCompositeOperation='destination-in';

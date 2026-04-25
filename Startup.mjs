@@ -2,7 +2,7 @@
  * This is not injected on the Character sheet unless abovevtt=true is in the query
  * So if you need anything to execute on the Character sheet when abovevtt is not running, do that in CharacterPage.js
  */
-import { init_audio_mixer } from './audio/index.js'
+import { init_audio_mixer } from './audio/index.mjs'
 
 /** The first time the window loads, start doing all the things */
 $(function() {
@@ -24,8 +24,20 @@ $(function() {
       .then((databases)=> {
         window.gameIndexedDb = databases[0];
         window.globalIndexedDB = databases[1];
-        const campaignSettings = JSON.parse(localStorage.getItem(`ExperimentalSettings${window.gameId}`)) || {};
-        const globalSettings = JSON.parse(localStorage.getItem(`ExperimentalSettingsGlobal`)) || {}; ;
+        let campaignSettings = {};
+        try {
+          campaignSettings = JSON.parse(localStorage.getItem(`ExperimentalSettings${window.gameId}`)) || {};
+        } catch (e) {
+          console.warn(`Failed to parse campaign settings for game ${window.gameId}, using defaults`, e);
+          localStorage.removeItem(`ExperimentalSettings${window.gameId}`);
+        }
+        let globalSettings = {};
+        try {
+          globalSettings = JSON.parse(localStorage.getItem(`ExperimentalSettingsGlobal`)) || {};
+        } catch (e) {
+          console.warn(`Failed to parse global settings, using defaults`, e);
+          localStorage.removeItem(`ExperimentalSettingsGlobal`);
+        }
         window.EXPERIMENTAL_SETTINGS = {...campaignSettings, ...globalSettings};
         if (is_release_build()) {
           // in case someone left this on during beta testing, we should not allow it here
@@ -44,8 +56,25 @@ $(function() {
       .then(init_splash)              // show the splash screen; it reads from settings. That's why we show it here instead of earlier
       .then(harvest_campaign_secret)  // find our join link
       .then(set_campaign_secret)      // set it to window.CAMPAIGN_SECRET
+      .then(store_campaign_info)      // store gameId and campaign secret in localStorage for use on other pages
       .then(async () => {
-        window.CAMPAIGN_INFO = await DDBApi.fetchCampaignInfo(window.gameId)
+        const maxRetries = 5
+        const baseDelay = 500
+        for (let attempt = 1; attempt <= maxRetries; attempt++) {
+          try {
+            window.CAMPAIGN_INFO = await DDBApi.fetchCampaignInfo(window.gameId)
+            break
+          } catch (error) {
+            if (attempt < maxRetries) {
+              const delay = Math.min(baseDelay * Math.pow(2, attempt - 1), 10000)
+              console.warn(`Failed to fetch campaign info (attempt ${attempt}/${maxRetries}), retrying in ${delay}ms...`, error)
+              await new Promise(resolve => setTimeout(resolve, delay))
+            } else {
+              showError(error, `Failed to fetch campaign info after ${maxRetries} attempts. This is likely temporary — please refresh the page. If the issue persists, D&D Beyond may be experiencing outages.`)
+              throw new noLogError(error.message, error.options)
+            }
+          }
+        }
         window.AVTT_CAMPAIGN_INFO = await AboveApi.getCampaignData();
         return window.CAMPAIGN_INFO.dmId;
       })
@@ -105,22 +134,24 @@ $(function() {
         window.STREAMPEERS = {};
         window.MYSTREAMID = uuid();
         window.JOINTHEDICESTREAM = window.EXPERIMENTAL_SETTINGS['streamDiceRolls'];
-        
-        const allDiceRegex = /\d+d(?:100|20|12|10|8|6|4)((?:kh|kl|ro(<|<=|>|>=|=)|min)\d+)*/gi; // ([numbers]d[diceTypes]kh[numbers] or [numbers]d[diceTypes]kl[numbers]) or [numbers]d[diceTypes]
-        const validExpressionRegex = /^[dkhlro<=>\s\d+\-\(\)]*$/gi; // any of these [d, kh, kl, spaces, numbers, +, -] // Should we support [*, /] ?
-        const validModifierSubstitutions = /(?<!\w)(str|dex|con|int|wis|cha|pb)(?!\w)/gi // case-insensitive shorthand for stat modifiers as long as there are no letters before or after the match. For example `int` and `STR` would match, but `mint` or `strong` would not match.
-        const diceRollCommandRegex = /^\/(r|roll|save|hit|dmg|skill|heal)\s/gi; // matches only the slash command. EG: `/r 1d20` would only match `/r`
-        const multiDiceRollCommandRegex = /\/(ir|r|roll|save|hit|dmg|skill|heal) [^\/]*/gi; // globally matches the full command. EG: `note: /r 1d20 /r2d4` would find ['/r 1d20', '/r2d4']
-        const allowedExpressionCharactersRegex = /^(d\d|\d+d\d+|kh\d+|kl\d+|ro(<|<=|>|>=|=)\d+|min\d+|\+|-|\d+|\s+|STR|DEX|CON|INT|WIS|CHA|PB)*/gi; // this is explicitly different from validExpressionRegex. This matches an expression at the beginning of a string while validExpressionRegex requires the entire string to match. It is also explicitly declaring the modifiers as case-sensitive because we can't search the entire thing as case-insensitive because the `d` in 1d20 needs to be lowercase.
-
-        if(window.EXPERIMENTAL_SETTINGS['streamDiceRolls']){
-          enable_dice_streaming_feature(window.JOINTHEDICESTREAM );
-        }
+        enable_dice_streaming_feature(window.JOINTHEDICESTREAM);
+       
         tabCommunicationChannel.addEventListener ('message', (event) => {
+          if((event.data.msgType == 'addCondition' || event.data.msgType == 'removeCondition') && event.data.sendTo == window.PLAYER_ID){ // Sets a player token's condition on and off
+            const tokenId = Object.keys(window.all_token_objects).find(key => key.includes(event.data.characterId));
+            const pcToken = window.all_token_objects[tokenId];
+            if(!pcToken) return;
+            const condition = event.data.text;
+            const setOnOff = event.data.msgType;
+            
+            pcToken[setOnOff](condition);
+            pcToken.place_sync_persist();
+            return;
+          }
           if(event.data.msgType == 'CharacterData' && !find_pc_by_player_id(event.data.characterId, false))
             return;
           if(event.data.msgType == 'roll'){
-            if(window.EXPERIMENTAL_SETTINGS['rpgRoller'] == true && event.data.msg.sendTo == window.PLAYER_ID){
+            if ((window.EXPERIMENTAL_SETTINGS['rpgRoller'] == true || event.data.msg.disableDDBDice) && event.data.msg.sendTo == window.PLAYER_ID){
                window.MB.inject_chat(event.data.msg);
             }
             else{
@@ -132,8 +163,9 @@ $(function() {
                   event.data.msg.player,
                   event.data.msg.img,
                   "character",
-                  event.data.msg.playerId
-                ), event.data.multiroll, event.data.critRange, event.data.critType, event.data.msg.rollData.spellSave, event.data.msg.rollData.damageType);
+                  event.data.msg.playerId,
+                  event.data.msg.sendToOverride
+                ), event.data.multiroll, event.data.critRange, event.data.critType, event.data.msg.rollData.spellSave, event.data.msg.rollData.damageType, event.data.forceCritType);
               }
             }       
             return;
@@ -165,13 +197,8 @@ $(function() {
             if($(`.tokenselected:not([data-id*='profile'])`).length == 0){
               showTempMessage('No non-player tokens selected');
             }
-                
-            for(let i=0; i<window.CURRENTLY_SELECTED_TOKENS.length; i++){
-
-              let id = window.CURRENTLY_SELECTED_TOKENS[i];
-              let token = window.TOKEN_OBJECTS[id];
-              if(token.isPlayer() || token.isAoe())
-                continue;
+            forSelTokens((token, id) => {    
+              if(token.isPlayer() || token.isAoe()) return;
               let newHp = Math.max(0, parseInt(token.hp) - parseInt(event.data.damage));
 
               if(window.all_token_objects[id] != undefined){
@@ -182,7 +209,7 @@ $(function() {
                 token.place_sync_persist()
                 addFloatingCombatText(id, event.data.damage, event.data.damage<0);
               }   
-            }
+            })
           }
           if(event.data.msgType=='DMOpenAlready' && window.DM && window.location.href.includes(event.data.url)){  
             window.close();
@@ -392,7 +419,7 @@ async function start_above_vtt_common() {
   
   startup_step("Fetching token customizations");
   fetch_token_customizations();
-
+  
   startup_step("Creating StatHandler, PeerManager, and MessageBroker");
   window.StatHandler = new StatHandler();
   window.PeerManager = new PeerManager();
@@ -1064,17 +1091,7 @@ async function start_above_vtt_for_players() {
     if(!window.CURRENT_SCENE_DATA.is_video || !window.CURRENT_SCENE_DATA.player_map.includes('youtu')){
       $("#youtube_controls_button").css('visibility', 'hidden');
     }
-    if ($('.stream-dice-button').length == 0){
-      $(".glc-game-log>[class*='Container-Flex']").append($(`<div id="stream_dice"><div class='stream-dice-button ${window.JOINTHEDICESTREAM ? `enabled` : ``}'>Dice Stream ${window.JOINTHEDICESTREAM ? `Enabled` : `Disabled`}</div></div>`));
-      $(".stream-dice-button").off().on("click", function () {
-        if (window.JOINTHEDICESTREAM) {
-          update_dice_streaming_feature(false);
-        }
-        else {
-          update_dice_streaming_feature(true);
-        }
-      })
-    }
+    add_dice_stream_gamelog_button()
      
   });
 
@@ -1101,7 +1118,7 @@ async function start_above_vtt_for_players() {
     console.error("There isn't a player map! we need to display something!");
     startup_step("Start up complete. Waiting for DM to send us a map");
   }
-  if($('.dice-rolling-panel').length == 0){
+  if($('.dice-rolling-panel, [data-floating-ui-portal]').length == 0){
     showDiceDisabledWarning();
   }
 }

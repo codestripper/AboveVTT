@@ -167,7 +167,7 @@ function token_context_menu_expanded(tokenIds, e) {
 	});
 
 
-	let moveableTokenOptions = $("<div id='tokenOptionsPopup'></div>");
+	let moveableTokenOptions = $("<div id='tokenOptionsPopup' class='moveableWindow'></div>");
 
 	
 	let body = $("<div id='tokenOptionsContainer'></div>");
@@ -175,8 +175,8 @@ function token_context_menu_expanded(tokenIds, e) {
 
 	$('body').append(moveableTokenOptions);
 
-	$("#tokenOptionsPopup").addClass("moveableWindow");
-	$("#tokenOptionsPopup").draggable({
+	frame_z_index_when_click(moveableTokenOptions, true);
+	moveableTokenOptions.draggable({
 		addClasses: false,
 		scroll: false,
 		handle: "div:not(:has(select)), button, label, input",
@@ -243,18 +243,21 @@ function token_context_menu_expanded(tokenIds, e) {
 					 			 (doors[0][11] != undefined ? doors[0][11] : "")
 					];	
 					window.DRAWINGS.push(data);
-					window.wallUndo.push({
+					pushWallUndo({
 						undo: [data],
 						redo: [doors[0]]
 					})
 
 
-					redraw_light_walls();
-					redraw_drawn_light();
+					redraw_light_walls({wallsChanged: true});
+					redraw_drawn_light(); // could limit this to point line of sight tool drawings
+					redraw_drawings(); // could limit this to point line of sight tool drawings
+					redraw_fog(); // could limit this to point line of sight tool drawings
+					redraw_elev(); // could limit this to point line of sight tool drawings
 					redraw_light();
 
 
-					sync_drawings();
+					sync_drawings({wallsChanged: true});
 					if(window.TOKEN_OBJECTS[`${x1}${y1}${x2}${y2}${window.CURRENT_SCENE_DATA.id}`.replaceAll('.','')]  != undefined){
 						window.TOKEN_OBJECTS[`${x1}${y1}${x2}${y2}${window.CURRENT_SCENE_DATA.id}`.replaceAll('.','')].place_sync_persist();
 					}
@@ -411,7 +414,7 @@ function token_context_menu_expanded(tokenIds, e) {
 					 			 (doors[0][11] != undefined ? doors[0][11] : "")
 					 	]
 					 	window.DRAWINGS.push(data);
-					 	window.wallUndo.push({
+					 	pushWallUndo({
 							undo: [[...data]],
 						})
 						let clonePortalId = `${mouseX-5}${mouseY}${mouseX+5}${mouseY}${window.CURRENT_SCENE_DATA.id}`.replaceAll('.','') 
@@ -567,7 +570,7 @@ function token_context_menu_expanded(tokenIds, e) {
 					 			 (doors[0][11] != undefined ? doors[0][11] : "")
 					];	
 					window.DRAWINGS.push(data);
-					window.wallUndo.push({
+					pushWallUndo({
 						undo: [data],
 						redo: [doors[0]]
 					})
@@ -614,7 +617,7 @@ function token_context_menu_expanded(tokenIds, e) {
 				 			 (doors[0][11] != undefined ? doors[0][11] : "")
 				];	
 				window.DRAWINGS.push(data);
-				window.wallUndo.push({
+				pushWallUndo({
 					undo: [data],
 					redo: [doors[0]]
 				})
@@ -654,7 +657,7 @@ function token_context_menu_expanded(tokenIds, e) {
 				 			 (doors[0][11] != undefined ? doors[0][11] : "")
 				];	
 				window.DRAWINGS.push(data);
-				window.wallUndo.push({
+				pushWallUndo({
 					undo: [data],
 					redo: [doors[0]]
 				})
@@ -939,6 +942,7 @@ function token_context_menu_expanded(tokenIds, e) {
 
 	if (tokens.length === 1) {
 		let token = tokens[0];
+
 		if (token.isPlayer() && !token.options.id.includes(window.PLAYER_ID)) {
 			let button = $(`<button>Open Character Sheet<span class="material-icons icon-view"></span></button>`);
 			button.on("click", function() {
@@ -949,17 +953,13 @@ function token_context_menu_expanded(tokenIds, e) {
 		} 
 		else if(token.options.statBlock){
 			let button =$('<button>Open Monster Stat Block<span class="material-icons icon-view"></span></button>');
-			
+			const {customStatBlock, pcURL} = token.getCustomPcUrl();
 			button.click(function(){
-				let customStatBlock = window.JOURNAL.notes[token.options.statBlock].text;
-				let pcURL = $(customStatBlock).find('.custom-pc-sheet.custom-stat').text();
 				if(pcURL){
 					open_player_sheet(pcURL, undefined, token.options.name);
 				}else{
-					load_monster_stat(undefined, token.options.id, customStatBlock)
-				}
-
-				
+					load_monster_stat(token.options.statBlock, token.options.id, customStatBlock)
+				}	
 				close_token_context_menu();
 			});
 			if(token.options.player_owned || window.DM){
@@ -1143,9 +1143,7 @@ function token_context_menu_expanded(tokenIds, e) {
 						if(window.all_token_objects[group] == undefined){
 							window.all_token_objects[group] = t;
 						}
-						t.sync = mydebounce(function(options) { // VA IN FUNZIONE SOLO SE IL TOKEN NON ESISTE GIA					
-							window.MB.sendMessage('custom/myVTT/token', options);
-						}, 300);
+
 						t.place_sync_persist();
 						ct_add_token(window.TOKEN_OBJECTS[group], false, undefined, clickEvent.shiftKey, clickEvent.ctrlKey)	
 					
@@ -1252,9 +1250,7 @@ function token_context_menu_expanded(tokenIds, e) {
 				if(window.all_token_objects[group] == undefined){
 					window.all_token_objects[group] = t;
 				}
-				t.sync = mydebounce(function(options) { // VA IN FUNZIONE SOLO SE IL TOKEN NON ESISTE GIA					
-					window.MB.sendMessage('custom/myVTT/token', options);
-				}, 300);
+
 				t.place_sync_persist();
 				ct_add_token(window.TOKEN_OBJECTS[group], false, undefined, clickEvent.shiftKey, clickEvent.ctrlKey)
 			}
@@ -3123,7 +3119,7 @@ function build_notes_flyout_menu(tokenIds, flyout) {
 	});
 	let editNoteButton = $(`<button class="icon-note material-icons">Create Note</button>`)
 
-	if(tokenIds.length=1){
+	if(tokenIds.length==1){
 		let has_note=id in window.JOURNAL.notes;
 		if(has_note){
 			let viewNoteButton = $(`<button class="icon-view-note material-icons">View Note</button>`)		
@@ -3430,21 +3426,13 @@ function build_adjustments_flyout_menu(tokenIds) {
 	// name
 	
 	let tokenSizes = [];
-	tokens.forEach(t => {
-		if(t.isLineAoe()){
-			tokenSizes.push(t.numberOfGridSpacesTall());
-		}
-		else{
-			tokenSizes.push(t.numberOfGridSpacesWide());
-		}
-	});
-
-
+	tokens.forEach(t => tokenSizes.push(t.numberOfGridSpaces()[t.isLineAoe() ? "height" : "width"]));
+	
 	let uniqueSizes = [...new Set(tokenSizes)];
 
 	console.log("uniqueSizes", uniqueSizes);
 	let lineaoe = tokens.length == 1 && tokens[0].isLineAoe();
-	let linewidthsize = tokens[0].numberOfGridSpacesWide();
+	let linewidthsize = tokens[0].numberOfGridSpaces().width;
 	let sizeInputs = build_token_size_input(uniqueSizes, function (newSize, linewidth=false) {
 		let tokenMultiplierAdjustment = (!window.CURRENT_SCENE_DATA.scaleAdjustment) ? 1 : (window.CURRENT_SCENE_DATA.scaleAdjustment.x > window.CURRENT_SCENE_DATA.scaleAdjustment.y) ? window.CURRENT_SCENE_DATA.scaleAdjustment.x : window.CURRENT_SCENE_DATA.scaleAdjustment.y;
 			
@@ -3564,6 +3552,19 @@ function build_adjustments_flyout_menu(tokenIds) {
 			});
 		});
 		body.append(opacityWrapper);
+
+		let tokenHeading = tokens.map(t => t.options.imageHeading);
+		let uniqueHeading = [...new Set(tokenHeading)];
+		let startingHeading = uniqueHeading.length === 1 && uniqueHeading[0] != undefined ? uniqueHeading[0] : 0;
+		let headingWrapper = build_token_num_input(startingHeading, tokens,  'Image Heading', 0, 360, 1, function (heading, persist=false) {
+			tokens.forEach(token => {
+				token.options.imageHeading = heading; //currently only takes effect on "rotating towards"
+				$(`.VTTToken[data-id='${token.options.id}']`).css("--token-heading", heading + "deg");
+				if(persist)
+					token.place_sync_persist();
+			});
+		});
+		body.append(headingWrapper);
 
 		let tokFlip = tokens.map(t => t.options?.tokenFlip);
 		let uniqueTokenFlip = [...new Set(tokFlip)];
@@ -4045,7 +4046,7 @@ function build_options_flyout_menu(tokenIds) {
 
 		let tokenSettings = tokens.map(t => t.options[setting.name]);
 		let uniqueSettings = [...new Set(tokenSettings)].filter(d => d != undefined);
-		if(uniqueSettings.length = 0)
+		if(uniqueSettings.length == 0)
 			uniqueSettings = [undefined]
 		let currentValue = null; // passing null will set the switch as unknown; undefined is the same as false
 		if (uniqueSettings.length === 1) {
@@ -4724,9 +4725,7 @@ function open_quick_roll_menu(e){
 		minWidth: 215,
 		minHeight: 200
 	});
-	$("#qrm_dialog").mousedown(function() {
-		frame_z_index_when_click($(this));
-	});
+	frame_z_index_when_click(qrm, true);
 }
 
 function add_to_quick_roll_menu(token){
