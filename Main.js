@@ -157,17 +157,18 @@ function change_zoom(newZoom, x, y, reset = false) {
 	
     if(!window.WIZARDING)
 		draw_svg_grid(); // scale grid so lines are always visible
-	if(reset != true){
-		$(window).scrollLeft(pageX);
-		$(window).scrollTop(pageY);	
-	}
+
 
 	$('#VTTWRAPPER').css({
 		"--window-zoom": window.ZOOM,
 	})
 	debounce_font_change();	
 	set_default_vttwrapper_size();
-	if(reset == true){
+	if(reset != true){
+		$(window).scrollLeft(pageX);
+		$(window).scrollTop(pageY);	
+	}
+	else {
 		//this was changed from scrollIntoView to calculate the center and scrollTo as if loaded in an iframe it would scroll the parent window in firefox
 		const sceneMap = $("#scene_map")[0];
 
@@ -197,27 +198,29 @@ function add_zoom_to_storage() {
 	console.group("add_zoom_to_storage");
 	console.log("storing zoom");
 
-	if(window.ZOOM !== get_reset_zoom()) {
-		const zooms = JSON.parse(localStorage.getItem('zoom')) || [];
-		const zoomIndex = zooms.findIndex(zoom => zoom.title === window.CURRENT_SCENE_DATA.title);
-		const centerView = center_of_view(); 
-		const sidebarSize = ($('#hide_rightpanel.point-right').length>0 ? get_sidebar_width() : 0);
-		if (zoomIndex !== -1) {
-			zooms[zoomIndex].zoom = window.ZOOM;
-			zooms[zoomIndex].leftOffset = window.scrollX + window.innerWidth/2 - sidebarSize/2;
-			zooms[zoomIndex].topOffset = window.scrollY + window.innerHeight/2;
-		}
-		else{
-			// zoom doesn't exist
-			zooms.push({
-				"title": window.CURRENT_SCENE_DATA.title,
-				"zoom":window.ZOOM,
-				"leftOffset": window.scrollX + window.innerWidth/2 - sidebarSize/2,
-				"topOffset": window.scrollY + window.innerHeight/2
-			});
-		}
-		localStorage.setItem('zoom', JSON.stringify(zooms));
-	} else {console.log("zoom has not changed, skipping storage")}
+	const currentDate = Date.now();
+	const zooms = JSON.parse(localStorage.getItem('zoom'))?.filter(z=> !z.title && z.expiryDate != undefined && z.expiryDate>currentDate) || []; // filter out old data that used to be based on scene title rather then id and remove older data to prevent long term storage issues
+	const centerView = center_of_view(); 
+	const sidebarSize = ($('#hide_rightpanel.point-right').length>0 ? get_sidebar_width() : 0);
+	const saved = zooms.find(zoom => zoom.id === window.CURRENT_SCENE_DATA.id);
+	if (saved != undefined) {
+		saved.zoom = window.ZOOM;
+		saved.leftOffset = window.scrollX + window.innerWidth/2 - sidebarSize/2;
+		saved.topOffset = window.scrollY + window.innerHeight/2;
+		saved.expiryDate = currentDate + (30 * 24 * 60 * 60 * 1000) ;
+	}
+	else{
+		// zoom doesn't exist
+		zooms.push({
+			"zoom":window.ZOOM,
+			"leftOffset": window.scrollX + window.innerWidth/2 - sidebarSize/2,
+			"topOffset": window.scrollY + window.innerHeight/2,
+			"id": window.CURRENT_SCENE_DATA.id,
+			"expiryDate": currentDate + (30 * 24 * 60 * 60 * 1000) // 30 days from now
+		});
+	}
+	localStorage.setItem('zoom', JSON.stringify(zooms));
+	
 
 	console.groupEnd("add_zoom_to_storage")
 }
@@ -226,24 +229,22 @@ function add_zoom_to_storage() {
 * Sets default values for VTTWRAPPER and black_layer based off zoom.
 */
 function set_default_vttwrapper_size() {
-	const vttwrapper = $("#VTTWRAPPER");
-	const scene_map = $("#scene_map");
 	const black_layer = $("#black_layer");
-	const scalezoom = window.CURRENT_SCENE_DATA.scale_factor * window.ZOOM;
-	const w = $("#scene_map").width() * scalezoom;
-	const h = $("#scene_map").height() * scalezoom;
-	vttwrapper.width(w + 1400);
-	vttwrapper.height(h + 1400);
-	black_layer.width(w + 2000 + window.VTTMargin );
-	black_layer.height(h + 2000 + window.VTTMargin );
+	const sceneMapSize = getSceneMapSize();
+	const w = sceneMapSize.sceneWidth * window.ZOOM * window.CURRENT_SCENE_DATA.scale_factor;
+	const h = sceneMapSize.sceneHeight * window.ZOOM * window.CURRENT_SCENE_DATA.scale_factor;
+	black_layer.width(w + 2000 + window.VTTMargin);
+	black_layer.height(h + 2000 + window.VTTMargin);
+
 }
 
 /**
  * Removes the zoom for the current scene from local storage, applied when user click "fit zoom" button.
  */
-function remove_zoom_from_storage() {
-	const zooms = JSON.parse(localStorage.getItem('zoom')) || [];
-	const zoomIndex = zooms.findIndex(zoom => zoom.title === window.CURRENT_SCENE_DATA.title);
+function remove_zoom_from_storage(sceneId = window.CURRENT_SCENE_DATA.id) {
+	const currentDate = Date.now();
+	const zooms = JSON.parse(localStorage.getItem('zoom'))?.filter(z=> !z.title && z.expiryDate != undefined && z.expiryDate>currentDate) || [];
+	const zoomIndex = zooms.findIndex(zoom => zoom.id === sceneId);
 	if (zoomIndex !== -1) {
 		console.log("removing zoom from storage", zooms[zoomIndex]);
 		zooms.splice(zoomIndex, 1);
@@ -269,8 +270,9 @@ function apply_zoom_from_storage() {
 	else{
 		const zoomState = localStorage.getItem("zoom");
 		if (zoomState != null) {
-			const zooms = JSON.parse(zoomState);
-			const zoomIndex = zooms.findIndex(zoom => zoom.title === window.CURRENT_SCENE_DATA.title);
+			const currentDate = Date.now();
+			const zooms = JSON.parse(zoomState)?.filter(z => !z.title && z.expiryDate != undefined && z.expiryDate>currentDate) || [];
+			const zoomIndex = zooms.findIndex(zoom => zoom.id === window.CURRENT_SCENE_DATA.id);
 			if(zoomIndex !== -1) {
 				console.log("restoring zoom level", zooms[zoomIndex]);
 				change_zoom(zooms[zoomIndex].zoom)
@@ -517,15 +519,15 @@ async function load_scenemap(url, is_video = false, width = null, height = null,
 						e.target.setVolume(25);
 					e.target.playVideo();
 
-	        const loopTime = window.YTPLAYER.playerInfo.duration - 0.15;
+	        		const loopTime = window.YTPLAYER.playerInfo.duration - 0.15;
 
-	        window.YTINTERVAL = setInterval(function (){
-	          const current_time = window.YTPLAYER.getCurrentTime();
-	          if (current_time > loopTime) {
-	            	window.YTPLAYER.seekTo(0);
+					window.YTINTERVAL = setInterval(function (){
+						const current_time = window.YTPLAYER.getCurrentTime();
+						if (current_time > loopTime) {
+								window.YTPLAYER.seekTo(0);
 								window.YTPLAYER.playVideo();
-	          }
-	        }, 10);
+						}
+					}, 10);
 				}			
 			}
 		});
@@ -1264,6 +1266,8 @@ const MAX_ZOOM_STEP = 20
  * Register event for mousewheel zoom.
  */
 function init_mouse_zoom() {
+	if(window.mouseZoomInitialized) return;
+	window.mouseZoomInitialized = true;
 	window.addEventListener('wheel', function (e) {
 		if (e.ctrlKey) {
 			e.preventDefault();
@@ -1556,8 +1560,9 @@ function observe_character_sheet_companion(documentToObserve){
 		let tokenName = $(this).parent().find('.ddbc-extra-name').find("span").text()
 		console.log("pretending to add a companion ", tokenName)
 	}
-
-	let companion_observer = new MutationObserver(function() {
+	if(window.companion_observer) 
+		window.companion_observer.disconnect();
+	window.companion_observer = new MutationObserver(function() {
 		let extras = documentToObserve.find(".ct-extra-row__preview:not('.above-vtt-visited')");
 		if (extras.length > 0){
 			extras.wrap(function() {
@@ -2195,40 +2200,48 @@ function init_ui() {
             <path id="dragbox-rect2" d="M 0 0 L 0 1 M 1 0 L 1 1 M 0 0 L 1 0 M 0 1 L 1 1"  class="drag-box-w"/>
             </g>
             <rect id="selbox-rect" class="sel-box" visibility="hidden" x="0" y="0" width="1" height="1" rx="0.01" />
-        <g id="rot-grab" class="grabber" visibility="hidden"> <g class="grabber-icon-c">
-            <circle fill="#ced9e080" cx="12.5" cy="12.5" r="12.5" />
-            <path d="M12.5,17.125 c-2.59,0-4.695-2.1-4.695-4.697
-             c0-2.592,2.102-4.695,4.695-4.695 c2.595,0,4.697,2.103,4.697,4.695 C17.197,15.025,15.095,17.125,12.5,17.125z
-             M24.75,12.5 c0,0-6.147-6.637-12.25-6.637 C6.397,5.863,0.25,12.5,0.25,12.5 s6.147,6.635,12.25,6.635
-             c3.26,0,6.53-1.892,8.872-3.655 M12.5,10.127 c-1.27,0-2.3,1.033-2.3,2.302 c0,1.267,1.033,2.302,2.3,2.302
-             c1.27,0,2.302-1.033,2.302-2.302 C14.802,11.16,13.77,10.127,12.5,10.127z" />
-        </g></g>
+        
 		
-        <g id="group-rot-grab" class="grabber" visibility="hidden"> <g class="grabber-icon-r">
-			<circle fill="#ced9e080" cx="12.5" cy="12.5" r="12.5" />
-			<g id="aoeRotateSvg" transform="translate(3,1) scale(2.2)">
-				<polygon points="1.22 8.06 3.17 1.94 7.43 6.74 1.22 8.06" style="fill: #ced9e080; stroke: #000; stroke-miterlimit: 10;"/>
-				<g>
-					<path d="M1.22,8.78c-.06,0-.12,0-.18-.02-.19-.05-.34-.17-.44-.33-.1-.17-.12-.36-.07-.55.08-.32.37-.54.7-.54.06,0,.12,0,.18.02.19.05.34.17.44.33.1.17.12.36.07.55-.08.32-.37.54-.7.54Z" style="fill: #000;"/>
-					<path d="M1.22,7.84s.04,0,.06,0c.12.03.19.15.16.27-.03.11-.13.17-.21.17-.02,0-.04,0-.06,0-.12-.03-.19-.15-.16-.27.03-.11.13-.17.21-.17M1.22,6.84c-.54,0-1.04.36-1.18.91-.17.65.22,1.32.87,1.49.1.03.21.04.31.04.54,0,1.04-.36,1.18-.91.17-.65-.22-1.32-.87-1.49-.1-.03-.21-.04-.31-.04h0Z" style="fill: #000;"/>
-				</g>
-				<g>
-					<path d="M8.6,5.11c-.24-2.24-1.49-3.65-3.73-4.23" style="fill: none; stroke: #000; stroke-linecap: round; stroke-linejoin: round;"/>
-					<polygon points="9.55 4.78 8.63 6.55 7.55 4.87 9.55 4.78" style="fill: #000;"/>
-					<polygon points="5.34 0 3.45 .64 4.96 1.96 5.34 0" style="fill: #000;"/>
-				</g>
-			</g>
-			<g id="groupRotateSvg">
-				<path d="M12.499 14.453 Q11.693 14.453 11.12 13.88 q-0.573-0.574-0.573-1.38
-				Q10.547 11.693 11.121 11.12 q0.574-0.573 1.38-0.573 Q13.307 10.547 13.88 11.121 q0.573 0.574 0.573 1.38
-				Q14.453 13.307 13.879 13.88 q-0.574 0.573-1.38 0.573 Z M12.5 21.875 q-3.906 0-6.641-2.747 T3.125 12.474
-				h1.563 q0 3.255 2.278 5.547 T12.5 20.313 q3.264 0 5.539-2.274 Q20.313 15.765 20.313 12.5 t-2.274-5.539
-				Q15.765 4.688 12.5 4.688 q-1.797 0-3.359 0.794 T6.406 7.63 h2.709 v1.563 H3.698 V3.776 h1.563 v2.76
-				q1.38-1.615 3.261-2.513 T12.5 3.125 q1.953 0 3.659 0.742 t2.969 2.005 q1.263 1.263 2.005 2.969 T21.875 12.5
-				q0 1.953-0.742 3.659 t-2.005 2.969 q-1.263 1.263-2.969 2.005 T12.5 21.875 Z"/>
-			</g>
-        </g></g>
+		</g>
       </svg>`);
+
+	const rotDragbox = $(
+		`<svg id="rotDragbox" xmlns="http://www.w3.org/2000/svg">
+			<g id="rot-grab" class="grabber" visibility="hidden"> <g class="grabber-icon-c">
+				<circle fill="#ced9e080" cx="12.5" cy="12.5" r="12.5" />
+				<path d="M12.5,17.125 c-2.59,0-4.695-2.1-4.695-4.697
+				c0-2.592,2.102-4.695,4.695-4.695 c2.595,0,4.697,2.103,4.697,4.695 C17.197,15.025,15.095,17.125,12.5,17.125z
+				M24.75,12.5 c0,0-6.147-6.637-12.25-6.637 C6.397,5.863,0.25,12.5,0.25,12.5 s6.147,6.635,12.25,6.635
+				c3.26,0,6.53-1.892,8.872-3.655 M12.5,10.127 c-1.27,0-2.3,1.033-2.3,2.302 c0,1.267,1.033,2.302,2.3,2.302
+				c1.27,0,2.302-1.033,2.302-2.302 C14.802,11.16,13.77,10.127,12.5,10.127z" />
+			</g></g>
+			<g id="group-rot-grab" class="grabber" visibility="hidden"> <g class="grabber-icon-r">
+				<circle fill="#ced9e080" cx="12.5" cy="12.5" r="12.5" />
+				<g id="aoeRotateSvg" transform="translate(3,1) scale(2.2)">
+					<polygon points="1.22 8.06 3.17 1.94 7.43 6.74 1.22 8.06" style="fill: #ced9e080; stroke: #000; stroke-miterlimit: 10;"/>
+					<g>
+						<path d="M1.22,8.78c-.06,0-.12,0-.18-.02-.19-.05-.34-.17-.44-.33-.1-.17-.12-.36-.07-.55.08-.32.37-.54.7-.54.06,0,.12,0,.18.02.19.05.34.17.44.33.1.17.12.36.07.55-.08.32-.37.54-.7.54Z" style="fill: #000;"/>
+						<path d="M1.22,7.84s.04,0,.06,0c.12.03.19.15.16.27-.03.11-.13.17-.21.17-.02,0-.04,0-.06,0-.12-.03-.19-.15-.16-.27.03-.11.13-.17.21-.17M1.22,6.84c-.54,0-1.04.36-1.18.91-.17.65.22,1.32.87,1.49.1.03.21.04.31.04.54,0,1.04-.36,1.18-.91.17-.65-.22-1.32-.87-1.49-.1-.03-.21-.04-.31-.04h0Z" style="fill: #000;"/>
+					</g>
+					<g>
+						<path d="M8.6,5.11c-.24-2.24-1.49-3.65-3.73-4.23" style="fill: none; stroke: #000; stroke-linecap: round; stroke-linejoin: round;"/>
+						<polygon points="9.55 4.78 8.63 6.55 7.55 4.87 9.55 4.78" style="fill: #000;"/>
+						<polygon points="5.34 0 3.45 .64 4.96 1.96 5.34 0" style="fill: #000;"/>
+					</g>
+				</g>
+				<g id="groupRotateSvg">
+					<path d="M12.499 14.453 Q11.693 14.453 11.12 13.88 q-0.573-0.574-0.573-1.38
+					Q10.547 11.693 11.121 11.12 q0.574-0.573 1.38-0.573 Q13.307 10.547 13.88 11.121 q0.573 0.574 0.573 1.38
+					Q14.453 13.307 13.879 13.88 q-0.574 0.573-1.38 0.573 Z M12.5 21.875 q-3.906 0-6.641-2.747 T3.125 12.474
+					h1.563 q0 3.255 2.278 5.547 T12.5 20.313 q3.264 0 5.539-2.274 Q20.313 15.765 20.313 12.5 t-2.274-5.539
+					Q15.765 4.688 12.5 4.688 q-1.797 0-3.359 0.794 T6.406 7.63 h2.709 v1.563 H3.698 V3.776 h1.563 v2.76
+					q1.38-1.615 3.261-2.513 T12.5 3.125 q1.953 0 3.659 0.742 t2.969 2.005 q1.263 1.263 2.005 2.969 T21.875 12.5
+					q0 1.953-0.742 3.659 t-2.005 2.969 q-1.263 1.263-2.969 2.005 T12.5 21.875 Z"/>
+				</g>
+			</g>
+		</svg>		
+		`
+	)
 
 	const walls = $("<canvas id='walls_layer' class='TLA'/>");
 	walls.css("z-index", "19");
@@ -2318,7 +2331,7 @@ function init_ui() {
 	VTT.append(drawOverlay);
 	VTT.append(textDiv);
 	VTT.append(tempOverlay);
-	VTT.append(dragSelectBox);
+	VTT.append(dragSelectBox, rotDragbox);
 	VTT.append(walls);
 	VTT.append(elev);
 	VTT.append(weather);
@@ -2341,23 +2354,19 @@ function init_ui() {
 	wrapper = $("<div id='VTTWRAPPER' class='TLA'/>");
 	wrapper.css("margin-left", `${window.VTTMargin}px`);
 	wrapper.css("margin-top", `${window.VTTMargin}px`);
-	wrapper.css("paddning-right", "200px");
+	wrapper.css("padding-right", "200px");
 	wrapper.css("padding-bottom", "200px");
-	wrapper.width(window.width);
-	wrapper.height(window.height);
+
 
 	wrapper.append(VTT);
 	$("body").append(wrapper);
 
 	black_layer = $("<div id='black_layer' class='TLA'/>");
-	black_layer.width(window.width+window.VTTMargin);
-	black_layer.height(window.height+window.VTTMargin);
 	black_layer.css("background", "black");
 	black_layer.css("opacity", "0");
 	$("body").append(black_layer);
 	black_layer.animate({ opacity: "1" }, 1000);
 	black_layer.css("z-index", "1");
-
 	black_layer.off('contextmenu').on('contextmenu', function(e){
 		e.preventDefault();
 	})
@@ -2379,14 +2388,17 @@ function init_ui() {
 	init_combat_tracker();
 
 	token_menu();
+	
 	install_grabbers(); //do it once instead of every time
-
 	// EXPERIMENTAL DRAG TO MOVE
 	let  curDown = false,
 		curYPos = 0,
 		curXPos = 0;
 
 	// Function separated so it can be dis/enabled
+	const throttleScroll = throttle((scrollOptions) => {
+		requestAnimationFrame(function(){window.scrollTo(scrollOptions)})
+	}, 30)
 	function mousemove(m) {
 		if (curDown) {
 			let scrollOptions = {
@@ -2394,9 +2406,7 @@ function init_ui() {
 				top: window.scrollY + curYPos - m.pageY,
 				behavior: "instant"
 			}
-			requestAnimationFrame(function(){
-				window.scrollTo(scrollOptions)
-			});
+			throttleScroll(scrollOptions)
 		}
 	}
 
@@ -3018,37 +3028,37 @@ function checkForExportRemind() {
 		const lastSaved = localStorage.getItem(storageKey);
 		return lastSaved ? (Date.now() - parseInt(lastSaved, 10)) / 86400000 : NaN;
 	}
-	function hideExportReminder() {
-		const exportReminder = $(`#exportReminder`);
-		if (exportReminder.length > 0){
-			exportReminder.hide();
-		}
-		
-	}
+
 	function showExportReminder() {
-		const exportReminder = $(`#exportReminder`);
-		if (exportReminder.length > 0){
-			exportReminder.show();
-		} else {
-			const exportReminder = find_or_create_generic_draggable_window("exportReminder", "Export Reminder", false, false, '#exportReminder', '40%', '10%', '10%', '10%', false, '', true);
-			const days = daysPassedSinceExport();
-			exportReminder.append(
-				$(`<div style="background: #fff">
-				It is time to do an export of this campaign.
-				<button id="exportRemindButton">Export</button>
-				</div>`)
-			);
-			$('#exportRemindButton').click(function (e) {
-				e.stopPropagation();
-				export_file('', true);
-				hideExportReminder();
-			});
-			exportReminder.show();
+		let exportReminder = $(`#exportReminder`);
+		if($(`#exportReminder`).length > 0) {
+			$(`#exportReminder`).show();
+			return;
 		}
+		exportReminder = find_or_create_generic_draggable_window("exportReminder", "Export Reminder", false, false, '#exportReminder', 'fit-content', '10%', '10%', '10%', false, '', false, true);	
+		exportReminder.append(
+			$(`<div style="background: #fff;
+								padding: 20px;
+								display: flex;
+								align-items: center;
+								flex-direction: column;
+								gap: 5px;
+								font-size: 16px;
+								font-weight: bold;
+							">
+			<span>It is time to do an export of this campaign.</span>
+			<button id="exportRemindButton">Export</button>
+			</div>`)
+		);
+		$('#exportRemindButton').click(function (e) {
+			e.stopPropagation();
+			export_file('', true);
+			$(`#exportReminder .title_bar_close_button`).click();
+		});
 	}
 	const remindSetting = get_avtt_setting_value('exportRemind');
 	const days = daysPassedSinceExport();
-	if(remindSetting && (isNaN(days) || days > parseInt(remindSetting))) {
+	if(remindSetting != 0 && (isNaN(days) || days > parseInt(remindSetting))) {
 		showExportReminder();
 	}
 }
@@ -3279,6 +3289,10 @@ function init_help_menu() {
 						<dl>
 							<dt>${getShiftKeyName()}+W</dt>
 							<dd>Toggle always show walls. Will also show 'hidden icon' doors/windows.</dd>
+						</dl>
+						<dl>
+							<dt>${getShiftKeyName()}+P</dt>
+							<dd>Open portal config window.</dd>
 						</dl>
 						<dl>
 							<dt>${getShiftKeyName()}+E</dt>
@@ -3813,7 +3827,7 @@ function toggle_sidebar_visibility() {
  * It will also adjust the position of the character sheet .
  */
 function show_sidebar(dispatchResize = true) {
-
+	$('#avtt-sidebar-resize-handle').show();
 	let toggleButton = $("#hide_rightpanel");
 	toggleButton.addClass("point-right").removeClass("point-left");
 	toggleButton.attr('data-visible', 1);
@@ -3983,6 +3997,7 @@ function hide_sidebar(triggerResize = true) {
 	toggleButton.addClass("point-left").removeClass("point-right");
 	toggleButton.attr('data-visible', 0);
 	window.showPanel = false;
+	$('#avtt-sidebar-resize-handle').hide();
 	if (is_characters_page() && window.innerWidth < 1024) {
 		if($(`[class*='styles_mobileNav']>div`).length == 0)
 			$(`[class*='styles_mobileNav']>button`).click();

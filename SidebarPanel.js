@@ -1598,7 +1598,7 @@ function build_sidebar_list_row(listItem) {
   rowItem.append(imgHolder);
   if (listItem.type !== "aoe" && !listItem.isTypeScene()){
     let tokenCustomizations = find_token_customization(listItem.type, listItem.id);
-    let listingImage = (tokenCustomizations?.tokenOptions?.alternativeImages && tokenCustomizations.tokenOptions?.alternativeImages?.[0] != undefined) ? tokenCustomizations.tokenOptions.alternativeImages[0] : listItem.image; 
+    let listingImage = tokenCustomizations?.tokenOptions?.defaultImage != undefined ? tokenCustomizations.tokenOptions.defaultImage : (tokenCustomizations?.tokenOptions?.alternativeImages && tokenCustomizations.tokenOptions?.alternativeImages?.[0] != undefined) ? tokenCustomizations.tokenOptions.alternativeImages[0] : listItem.image; 
     let img;
     let video = false;
     let isAvttBucketFile = listingImage?.startsWith('above-bucket-not-a-url');
@@ -1889,7 +1889,12 @@ function build_sidebar_list_row(listItem) {
       }
       break;
     case ItemType.MyToken:
-      subtitle.hide();
+      if(window.JOURNAL.notes[listItem.id] !== undefined){
+        const statBlock = $(`<div>${window.JOURNAL.notes[listItem.id].text}</div>`)
+        const cr = window.JOURNAL.getCustomCR(statBlock);
+        subtitle.append(`<div class="subtitle-attibute challenge-rating"><span class="plain-text">CR</span>${cr}</div>`)
+      }
+     
       // TODO: Style specifically for My Tokens
       row.css("cursor", "default");
       break;
@@ -2008,7 +2013,13 @@ function build_sidebar_list_row(listItem) {
       break;
     case ItemType.Monster:
       row.attr("data-monster", listItem.monsterData.id);
-      subtitle.append(`<div class="subtitle-attibute"><span class="plain-text">CR</span>${convert_challenge_rating_id(listItem.monsterData.challengeRatingId)}</div>`);
+      if(window.JOURNAL.notes[listItem.id] !== undefined){
+        const statBlock = $(`<div>${window.JOURNAL.notes[listItem.id].text}</div>`)
+        const cr = window.JOURNAL.getCustomCR(statBlock);
+        subtitle.append(`<div class="subtitle-attibute challenge-rating"><span class="plain-text">CR</span>${cr}</div>`)
+      } else{
+        subtitle.append(`<div class="subtitle-attibute challenge-rating"><span class="plain-text">CR</span>${convert_challenge_rating_id(listItem.monsterData.challengeRatingId)}</div>`);   
+      }
       if (listItem.monsterData.isHomebrew === true) {
         subtitle.append(`<div class="subtitle-attibute"><span class="material-icons">alt_route</span>Homebrew</div>`);
       } else if (listItem.monsterData.isReleased === false) {
@@ -2033,7 +2044,7 @@ function build_sidebar_list_row(listItem) {
       break;
     case ItemType.Open5e:
       row.attr("data-monster", listItem.monsterData.id);
-      subtitle.append(`<div class="subtitle-attibute"><span class="plain-text">CR</span>${convert_challenge_rating_id(listItem.monsterData.challengeRatingId)}</div>`);
+      subtitle.append(`<div class="subtitle-attibute challenge-rating"><span class="plain-text">CR</span>${convert_challenge_rating_id(listItem.monsterData.challengeRatingId)}</div>`);
       if (listItem.monsterData.isHomebrew === true) {
         subtitle.append(`<div class="subtitle-attibute"><span class="material-icons" style="width: 15px;font-family: 'Material Symbols Outlined'; font-size:15px;">book_2</span>${listItem.monsterData.document?.key}</div>`);
       } 
@@ -2058,7 +2069,6 @@ function build_sidebar_list_row(listItem) {
         $("#scenes-panel .dm_scenes_button.selected-scene").removeClass("selected-scene");
         $(clickEvent.currentTarget).addClass("selected-scene");
         window.MB.sendMessage("custom/myVTT/switch_scene", { sceneId: listItem.id, switch_dm: true });
-        add_zoom_to_storage();
       });
       let switch_players = $(`<button class='player_scenes_button token-row-button' title="Move Players To This Scene"></button>`);
       switch_players.append(svg_everyone());
@@ -2077,7 +2087,6 @@ function build_sidebar_list_row(listItem) {
         }
         window.splitPlayerScenes = {};
         $('#scenes-panel .sidebar-list-item-row-details~img').remove();
-        add_zoom_to_storage()
       });
       rowItem.append(switch_dm);
       rowItem.append(switch_players);
@@ -2649,43 +2658,7 @@ function edit_encounter(clickEvent) {
           cr = foundCR;
         }
         else if(hasCustomStatBlock){
-          if(window.JOURNAL.notes[itemCustomization.tokenOptions.statBlock] != undefined){
-           
-            statBlock.find('style').remove();
-            statBlock=statBlock[0].innerHTML;
-            let crText = $(statBlock).find('.custom-challenge-rating.custom-stat').text();
-            if(crText == '' || crText == undefined){
-              let searchText = statBlock.replaceAll('mon-stat-block-2024', '').replaceAll(/\&nbsp\;/g,' ')
-
-              let statBlockCR = searchText.matchAll(/[\s>]CR[\s]+([0-9]+(\/[0-9])?)/gi).next()
-              if(statBlockCR.value != undefined){
-                if(statBlockCR.value[1] != undefined)
-                    crText = statBlockCR.value[1];
-              } 
-              else{
-                statBlockCR = searchText.matchAll(/[\s>](CR[\W]|challenge)[\s\S]*?[\s>]([0-9]+(\/[0-9])?)/gi).next()
-
-                if(statBlockCR.value != undefined){
-                    if(statBlockCR.value[2] != undefined)
-                        crText = statBlockCR.value[2];
-                }  
-              }
-
-                    
-            }
-            if(crText != '' && crText != undefined){
-              try{
-                cr = eval(crText); 
-              }catch(e){
-                console.warn(`Could not parse CR from custom stat block, defaulting to 0. CR text was ${crText}`);
-                cr = 0;
-              }
-            }
-            else{
-              cr = 0;
-            }
-
-          }
+          cr = window.JOURNAL.getCustomCR(statBlock);
         }
         for(let j = 0; j<item.quantity; j++ ){
           if(item.type != 'pc'){

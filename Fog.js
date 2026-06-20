@@ -156,7 +156,7 @@ class WaypointManagerClass {
 			backgroundColor: "rgba(255, 255, 255, 0.7)"
 		}
 		this.playerId = window.PLAYER_ID;
-		this.throttleDraw = throttle((callback) => {requestAnimationFrame(callback)}, 1000/240);
+		this.throttleDraw = throttle((callback) => {requestAnimationFrame(callback)}, 1000/24);
 	}
 
 	resetDefaultDrawStyle(){
@@ -720,8 +720,8 @@ function is_door_in_visible_light(door, imageData){
 	const centerY = parseInt($(door).css('--mid-y')) / window.CURRENT_SCENE_DATA.scale_factor;
 	let pixeldata;
 
-	for(let x=centerX-10; x<=centerX+10; x++){
-		for(let y=centerY-10; y<=centerY+10; y++){
+	for(let x=centerX-3; x<=centerX+3; x++){
+		for(let y=centerY-3; y<=centerY+3; y++){
 			pixeldata = getPixelFromImageData(imageData, x, y);
 			if(pixeldata[0]>=5 || pixeldata[1]>=5 || pixeldata[2]>=5)
 				return true;
@@ -846,10 +846,10 @@ function do_check_token_visibility() {
 	console.log("do_check_token_visibility");
 	if(window.LOADING)
 		return;
-	if((window.DM && !window.SelectedTokenVision) || (window.DM && $('#tokens .tokenselected:not(.isAoe)').length == 0)){
-		$(`.token`).toggleClass('notVisible', false);
-		$(`.door-button`).toggleClass('notVisible', false);
-		$(`.aura-element`).toggleClass('notVisible', false);
+	if((window.DM && !window.SelectedTokenVision) || (window.DM && document.querySelectorAll('#tokens .tokenselected:not(.isAoe)').length == 0)){
+		document.querySelectorAll('.token').forEach(el => el.classList.remove('notVisible'));
+		document.querySelectorAll('.door-button').forEach(el => el.classList.remove('notVisible'));
+		document.querySelectorAll('.aura-element').forEach(el => el.classList.remove('notVisible'));
 		return;
 	}
 	if(!window.walls){
@@ -858,12 +858,17 @@ function do_check_token_visibility() {
 	}
 
 
-	let hideIds = $('');
-	let showTokenIds = $('');
-	let showAuraIds = $('');
-	let showDoors = $('');
-	let hideDoors = $('');
-	let dmSelectedTokens = $('');
+	const hideIds = new Set();
+	const showTokenIds = new Set();
+	const showAuraIds = new Set();
+	const showDoors = new Set();
+	const hideDoors = new Set();
+	const dmSelectedTokens = new Set();
+
+	const addElementsToSet = (target, elementSet) => {
+		if (!target) return;
+		target.get().forEach(el => elementSet.add(el));
+	};
 
 	if(window.fogCanvas == undefined){
 		window.fogCanvas = document.getElementById('fog_overlay');
@@ -876,7 +881,8 @@ function do_check_token_visibility() {
 	let lightContext = window.lightInLosContext;
 
 	
-	let playerTokenId = $(`.token[data-id*='${window.PLAYER_ID}']`).attr("data-id");
+	const playerTokenEl = document.querySelector(`.token[data-id*='${window.PLAYER_ID}']`);
+	const playerTokenId = playerTokenEl?.getAttribute('data-id');
 	
 	let playerTokenHasVision;
 	const tokenObjectValues = Object.values(window.TOKEN_OBJECTS);
@@ -900,9 +906,11 @@ function do_check_token_visibility() {
 	} else if (aPlayerToken == true || window.CURRENT_SCENE_DATA.disableSceneVision == 1){
 		offScreenCtx.fillStyle = 'rgba(255, 255, 255 , 1)';
 		offScreenCtx.fillRect(0, 0, offScreenCanvas.width, offScreenCanvas.height)
+	} else{
+		offScreenCtx.clearRect(0, 0, offScreenCanvas.width, offScreenCanvas.height);
 	}
 
-	const truesightAuraExists = $(`.aura-element-container-clip.truesight`).length > 0;
+	const truesightAuraExists = document.querySelector('.aura-element-container-clip.truesight') !== null;
 
 	let truesightContext;
 	let truesightData;
@@ -946,40 +954,40 @@ function do_check_token_visibility() {
 		}
 
 		if (showThisPlayerToken !== true && ((hideThisTokenInFogOrDarkness === true && inVisibleLight !== true && dmSelected !== true) || (window.TOKEN_OBJECTS[id].options.hidden === true && inTruesight !== true && dmSelected !== true) || (hideInvisible === true && inTruesight !== true))) {
-			hideIds = hideIds.add(tokenSelector).add(auraSelector).add(darknessTokenSelector)
-		}	
+			addElementsToSet(tokenSelector, hideIds);
+			addElementsToSet(auraSelector, hideIds);
+			addElementsToSet(darknessTokenSelector, hideIds);
+		}   
 		else if (window.TOKEN_OBJECTS[id].options.hidden !== true || inTruesight === true) {
-			showTokenIds = showTokenIds.add(tokenSelector).add(darknessTokenSelector);
+			addElementsToSet(tokenSelector, showTokenIds);
+			addElementsToSet(darknessTokenSelector, showTokenIds);
 			if(window.TOKEN_OBJECTS[id].options.hideaura !== true || id === playerTokenId)
-				showAuraIds = showAuraIds.add(auraSelector);
+				addElementsToSet(auraSelector, showAuraIds);
 		}else if(dmSelected === true){
-			dmSelectedTokens = dmSelectedTokens.add(tokenSelector).add(darknessTokenSelector);
-		}	
-		
-	}
-
-	let doors = $('.door-button');
-	for(let i=0; i<doors.length; i++){
-		let door = doors[i];
-
-		const inVisibleLight = (is_door_in_visible_light(door, offscreenImageData) === true); 
-
-		if (!inVisibleLight || $(door).hasClass('secret')) {
-			hideDoors = hideDoors.add(door)
-		}
-		else {
-			showDoors = showDoors.add(door)
+			addElementsToSet(tokenSelector, dmSelectedTokens);
+			addElementsToSet(darknessTokenSelector, dmSelectedTokens);
 		}
 	}
-	
-	hideIds.toggleClass('notVisible', true);
-	showTokenIds.css({ 'opacity': 1 });
-	showTokenIds.toggleClass('notVisible', false);
-	showAuraIds.toggleClass('notVisible', false);
-	dmSelectedTokens.css({ 'display': 'flex' });
 
-	showDoors.toggleClass('notVisible', false);
-	hideDoors.toggleClass('notVisible', true);
+	document.querySelectorAll('.door-button').forEach(door => {
+		const inVisibleLight = (is_door_in_visible_light(door, offscreenImageData) === true);
+		if (!inVisibleLight || door.classList.contains('secret')) {
+			hideDoors.add(door);
+		} else {
+			showDoors.add(door);
+		}
+	});
+
+	hideIds.forEach(el => el.classList.add('notVisible'));
+	showTokenIds.forEach(el => {
+		el.style.opacity = '1';
+		el.classList.remove('notVisible');
+	});
+	showAuraIds.forEach(el => el.classList.remove('notVisible'));
+	dmSelectedTokens.forEach(el => el.style.display = 'flex');
+
+	showDoors.forEach(el => el.classList.remove('notVisible'));
+	hideDoors.forEach(el => el.classList.add('notVisible'));
 }
 
 function circle2(a, b) {
@@ -1438,7 +1446,7 @@ function reset_canvas(apply_zoom=true) {
 	$("#scene_map_container").css({"width": sceneMapWidth, "height": sceneMapHeight});
 	// grid overlay css tiling needs a container to fill that matches map
 	$("#grid_svg_overlay_container").css({"width": sceneMapWidth, "height": sceneMapHeight});
-	$("#dragbox").css({"width": sceneMapWidth, "height": sceneMapHeight});	
+	$("#dragbox, #rotDragbox").css({"width": sceneMapWidth, "height": sceneMapHeight});	
 	ctxScale('peer_overlay', sceneMapWidth, sceneMapHeight);
 	ctxScale('temp_overlay', sceneMapWidth, sceneMapHeight);
 	ctxScale('draw_overlay_under_fog_darkness', sceneMapWidth, sceneMapHeight, true);
@@ -1633,7 +1641,8 @@ function redraw_fog() {
 
 	ctx.fillStyle = fogStyle;
 	ctx.fillRect(0, 0, canvas.width, canvas.height);
-
+	let wallCache = [];
+	let allWalls = [];
 	for (let i = 0; i < window.REVEALED.length; i++) {
 		let d = window.REVEALED[i];
 		let adjustedArray = [];
@@ -1669,8 +1678,15 @@ function redraw_fog() {
 				for(let adjusted = 0; adjusted < 2; adjusted++){
 					adjustedArray[adjusted] = d[adjusted] / (revealedScale);
 				}
-				// REVEAL BUCKET				
-				bucketFill(ctx, adjustedArray[0], adjustedArray[1]);
+				// REVEAL BUCKET	
+				if(wallCache.length == 0){					
+					const darknessBoundarys = getDarknessBoundarys();
+					const tokenWalls = getVisionBlockingTokenWalls();
+					allWalls = [...window.walls, ...darknessBoundarys, ...tokenWalls];
+					wallCache = buildWallCache(allWalls);
+				}
+						
+				bucketFill(ctx, adjustedArray[0], adjustedArray[1], undefined, undefined, undefined, undefined, undefined, undefined, undefined, allWalls, wallCache);
 			}
 			if (d[4] == 5) {
 				//HIDE 3 POINT RECT
@@ -1729,8 +1745,14 @@ function redraw_fog() {
 				for(let adjusted = 0; adjusted < 2; adjusted++){
 					adjustedArray[adjusted] = d[adjusted] / (revealedScale);
 				}
+				if(wallCache.length == 0){					
+					const darknessBoundarys = getDarknessBoundarys();
+					const tokenWalls = getVisionBlockingTokenWalls();
+					allWalls = [...window.walls, ...darknessBoundarys, ...tokenWalls];
+					wallCache = buildWallCache(allWalls);
+				}
 				// HIDE BUCKET
-				bucketFill(ctx, adjustedArray[0], adjustedArray[1], fogStyle, 1, false);			
+				bucketFill(ctx, adjustedArray[0], adjustedArray[1], fogStyle, 1, false, undefined, undefined, undefined, undefined, allWalls, wallCache);			
 			}
 			if (d[4] == 5) {
 				//HIDE 3 POINT RECT	
@@ -1839,7 +1861,8 @@ function redraw_drawings() {
 	offscreenDrawAboveFog.height = canvasAboveFog.height;
 	offscreenDrawBelowFog.width = canvasBelowFog.width;
 	offscreenDrawBelowFog.height = canvasBelowFog.height;
-
+	let wallCache = [];
+	let allWalls = [];
 	for (let i = 0; i < drawings.length; i++) {
 		let drawing_clone = $.extend(true, [], drawings[i]);
 		let [shape, fill, color, x, y, width, height, lineWidth, scale, location, lineBlur] = drawing_clone;
@@ -1916,7 +1939,13 @@ function redraw_drawings() {
 			drawBrushArrow(targetCtx, x, color, lineWidth, scale, fill);
 		}
 		else if(shape == "paint-bucket"){
-			bucketFill(targetCtx, x/window.CURRENT_SCENE_DATA.scale_factor, y/window.CURRENT_SCENE_DATA.scale_factor, color, 1, true, undefined, undefined, lineBlur);
+			if(wallCache.length == 0){					
+				const darknessBoundarys = getDarknessBoundarys();
+				const tokenWalls = getVisionBlockingTokenWalls();
+				allWalls = [...window.walls, ...darknessBoundarys, ...tokenWalls];
+				wallCache = buildWallCache(allWalls);
+			}
+			bucketFill(targetCtx, x/window.CURRENT_SCENE_DATA.scale_factor, y/window.CURRENT_SCENE_DATA.scale_factor, color, 1, true, undefined, undefined, lineBlur, undefined, allWalls, wallCache);
 		}
 		else if(shape == "3pointRect"){
 		 	draw3PointRect(targetCtx, x, color, isFilled, lineWidth, undefined, undefined, scale);	
@@ -1962,7 +1991,8 @@ function redraw_elev(openLegened = false) {
 	let minHeight = Math.min(...elevColorArr);
 	maxHeight = maxHeight == 0 && minHeight == 0 ? 50 : Math.max(Math.abs(minHeight), maxHeight);
 
-
+	let wallCache = [];
+	let allWalls = [];
 	for (let i = 0; i < drawings.length; i++) {
 		let drawing_clone = $.extend(true, [], drawings[i]);
 		let [shape, fill, color, x, y, width, height, lineWidth, scale] = drawing_clone;
@@ -2014,7 +2044,13 @@ function redraw_elev(openLegened = false) {
 		 	draw3PointRect(offscreenContext, x, color, isFilled, lineWidth, undefined, undefined, scale);	
 		}
 		if(shape == "paint-bucket"){
-			bucketFill(offscreenContext, x/window.CURRENT_SCENE_DATA.scale_factor, y/window.CURRENT_SCENE_DATA.scale_factor, color, 1, false);
+			if(wallCache.length == 0){
+				const darknessBoundarys = getDarknessBoundarys();
+				const tokenWalls = getVisionBlockingTokenWalls();
+				allWalls = [...window.walls, ...darknessBoundarys, ...tokenWalls];
+				wallCache = buildWallCache(allWalls);
+			}
+			bucketFill(offscreenContext, x/window.CURRENT_SCENE_DATA.scale_factor, y/window.CURRENT_SCENE_DATA.scale_factor, color, 1, false, undefined, undefined, undefined, undefined, allWalls, wallCache);
 		}
 					
 	}
@@ -2082,6 +2118,8 @@ function redraw_drawn_light(darknessMoved = false){
 	let offscreenDraw = new OffscreenCanvas(lightCanvas.width, lightCanvas.height);
 	let offscreenContext = offscreenDraw.getContext('2d');
 
+	let wallCache = [];
+	let allWalls = [];
 
 	for (let i = 0; i < drawings.length; i++) {
 		let drawing_clone = $.extend(true, [], drawings[i]);
@@ -2144,7 +2182,14 @@ function redraw_drawn_light(darknessMoved = false){
 			drawBrushstroke(offscreenContext, x, color, lineWidth, scale);
 		}
 		else if(shape == "paint-bucket"){
-			bucketFill(offscreenContext, x / window.CURRENT_SCENE_DATA.scale_factor, y / window.CURRENT_SCENE_DATA.scale_factor, color, 1, true, width, height, lineBlur, darknessMoved);
+			if(wallCache.length == 0){					
+				const darknessBoundarys = getDarknessBoundarys();
+				const tokenWalls = getVisionBlockingTokenWalls();
+				allWalls = [...window.walls, ...darknessBoundarys, ...tokenWalls];
+				wallCache = buildWallCache(allWalls);
+			}
+			
+			bucketFill(offscreenContext, x / window.CURRENT_SCENE_DATA.scale_factor, y / window.CURRENT_SCENE_DATA.scale_factor, color, 1, true, width, height, lineBlur, darknessMoved, allWalls, wallCache);
 		}
 		else if(shape == "3pointRect"){
 		 	draw3PointRect(offscreenContext, x, color, isFilled, lineWidth, undefined, undefined, scale);	
@@ -2179,6 +2224,459 @@ function setVisionLightOffscreenCanvas(){
 	create_or_set_offscreen_canvas('moveOffscreenCanvasMask', true, true); // used to store moveable area that's checked against while moving tokens
 	create_or_set_offscreen_canvas('devilsightCanvas'); //devilsight canvas is used to combine with darkness aoe (or other magical darkness sources if implemented)
 	create_or_set_offscreen_canvas('truesightCanvas'); //this is stored and checked against in vision checks for invisible creatures (also works like devilsight for magical darkness)
+}
+function open_portal_config(){
+
+	const container = find_or_create_generic_draggable_window('portal_config_window', 'Portal Configuration', false, false, undefined, '500px', 'fit-content', '30px', '317px', false, `input, button`, false, true, ()=>{window.portalsInConfig = undefined;});	
+	container.find('.portal-listing').remove();
+	if(window.portalsInConfig == undefined){
+		window.portalsInConfig = {};
+	}
+	const portals = window.DRAWINGS.filter(d => {
+		if(d[1] != "wall")
+			return false;
+		
+		const type = Object.keys(doorColors).find(key => Object.keys(doorColors[key]).find(key2 => doorColors[key][key2] === d[2]));
+		return type == 12;
+	});
+	const listing = $(`<div class='portal-listing'></div>`)
+	const table = $(`<table class='portal-table'></table>`)
+	const tableHeaders = $(`<tr><th>Find Portal</th><th>Name</th><th class='show-name-portal-title'>Always Show Name</th><th class='linked-portal-title'>Place Linked Portal</th><th>Copy ID</th><th>More</th></tr>`)
+	table.append(tableHeaders);
+	listing.append(table);
+	const addPortal = $(`<button id='addPortal'>Add Portal</button>`)
+	listing.append(addPortal);
+	addPortal.off('pointerdown.addPortal').on('pointerdown.addPortal', function(){
+	
+		$('#select-button').click();
+		$('#tokenOptionsClickCloseDiv').click();
+		let target = $("#temp_overlay, #fog_overlay, #VTT, #black_layer");	
+		$("#temp_overlay").css('z-index', '50');
+		let canvas = document.getElementById("temp_overlay");
+		let context = canvas.getContext("2d");
+		target.css('cursor', 'crosshair');
+		target.off('mousemove.drawTele').on('mousemove.drawTele', function(e){
+			clear_temp_canvas();
+			let brushpoints = [];
+			let [endX, endY] = get_event_cursor_position(e);
+			let [rectX, rectY] = [endX - window.CURRENT_SCENE_DATA.hpps/2, endY-window.CURRENT_SCENE_DATA.vpps/2]
+			context.setLineDash([5, 5])
+			drawRect(context, rectX, rectY, window.CURRENT_SCENE_DATA.hpps, window.CURRENT_SCENE_DATA.vpps, '#fff', false)
+
+			context.setLineDash([])
+		});
+		target.off('mouseup.setTele touchend.setTele').on('mouseup.setTele touchend.setTele', function(e){
+			if ( e.button == 2) {
+				return;
+			}
+
+			const [mouseX, mouseY] = get_event_cursor_position(e);
+		
+			let data = ['line',
+						'wall',
+						'rgba(25, 25, 180, 1)',
+						mouseX-5,
+						mouseY,
+						mouseX+5,
+						mouseY,
+						12,
+						window.CURRENT_SCENE_DATA.scale_factor,
+						false, 
+						'', 
+						''
+			]
+			window.DRAWINGS.push(data);
+			pushWallUndo({
+				undo: [[...data]],
+			})
+			let newPortalId = `${mouseX-5}${mouseY}${mouseX+5}${mouseY}${window.CURRENT_SCENE_DATA.id}`.replaceAll('.','') 
+
+			
+			let options = {
+				...default_options(),
+				left: `${mouseX-25}px`,
+				top: `${mouseY-25}px`,
+				id: newPortalId,
+				vision:{
+					feet: 0,
+					color: `rgba(0, 0, 0, 0)`
+				},
+				devilsight:{
+					feet: 0,
+					color: `rgba(0, 0, 0, 0)`
+				},
+				truesight:{
+					feet: 0,
+					color: `rgba(0, 0, 0, 0)`
+				},
+				imgsrc: `data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=`,
+				type: 'door',
+				size: 50,
+				scaleCreated: window.CURRENT_SCENE_DATA.scale_factor,
+				auraislight: false,
+				alwaysshowname: window.TOKEN_SETTINGS.alwaysshowname != undefined ? window.TOKEN_SETTINGS.alwaysshowname : false
+			};
+			if(window.TOKEN_OBJECTS[newPortalId] == undefined){
+				window.ScenesHandler.create_update_token(options);
+			}else {
+				window.TOKEN_OBJECTS[newPortalId] = options;
+			}
+			window.TOKEN_OBJECTS[newPortalId].place(0);
+			window.TOKEN_OBJECTS[newPortalId].sync();
+			redraw_light_walls();
+			sync_drawings();
+			open_portal_config();
+			clear_temp_canvas();
+			target.off('mouseup.setTele touchend.setTele');
+			target.off('mousemove.drawTele')
+			$("#temp_overlay").css('z-index', '25');
+		});
+	})
+	container.append(listing);
+	if(portals.length>0){
+		for(let i=0; i<portals.length; i++){
+			const portal_clone = $.extend(true, [], portals[i]);
+			const [shape, fill, color, x, y, width, height] = portal_clone;
+			const portalId = `${x}${y}${width}${height}${window.CURRENT_SCENE_DATA.id}`.replaceAll('.','');
+
+			if(window.TOKEN_OBJECTS[portalId] == undefined){
+				let portalDoorButton = $(`[data-id='${portalId}'].door-button`)
+				if(portalDoorButton.length == 0)
+					continue;
+				let options = {
+					...default_options(),
+					left: `${parseFloat(portalDoorButton.css('--mid-x')) - 25}px`,
+					top: `${parseFloat(portalDoorButton.css('--mid-y')) - 25}px`,
+					id: portalId,
+					vision:{
+						feet: 0,
+						color: `rgba(0, 0, 0, 0)`
+					},
+					devilsight:{
+						feet: 0,
+						color: `rgba(0, 0, 0, 0)`
+					},
+					truesight:{
+						feet: 0,
+						color: `rgba(0, 0, 0, 0)`
+					},
+					imgsrc: `data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=`,
+					type: 'door',
+					size: 50,
+					scaleCreated: window.CURRENT_SCENE_DATA.scale_factor,
+					auraislight: false,
+					alwaysshowname: window.TOKEN_SETTINGS.alwaysshowname != undefined ? window.TOKEN_SETTINGS.alwaysshowname : false
+				};
+				window.ScenesHandler.create_update_token(options);
+			}
+			if(window.all_token_objects[portalId] == undefined){
+				window.all_token_objects[portalId] = window.TOKEN_OBJECTS[portalId]	
+			}
+			const portalObject = {
+				id: portalId,
+				sceneId: window.CURRENT_SCENE_DATA.id,
+				token: $.extend(true, {}, window.TOKEN_OBJECTS[portalId]),
+				portalWall: portal_clone
+			};
+			window.portalsInConfig[portalId] = portalObject;
+		}
+	}
+	if(Object.keys(window.portalsInConfig).length > 0){
+		function addPortalCell(row, $element){
+			const cell = $(`<td></td>`);
+			cell.append($element);
+			row.append(cell);
+		}
+		for(let portalId in window.portalsInConfig){
+			const portal = window.portalsInConfig[portalId];
+			const portalRow = $(`<tr class='portal-entry' data-id='${portalId}'></tr>`);
+			const locatePortal = portal.sceneId == window.CURRENT_SCENE_DATA.id 
+				? $(`<button class='locate-portal portalButton'>
+					<svg class="findSVG" xmlns="http://www.w3.org/2000/svg" height="24px" viewBox="0 0 24 24" width="24px" fill="#000000"><path d="M0 0h24v24H0z" fill="none"/><path d="M12 11c1.33 0 4 .67 4 2v.16c-.97 1.12-2.4 1.84-4 1.84s-3.03-.72-4-1.84V13c0-1.33 2.67-2 4-2zm0-1c-1.1 0-2-.9-2-2s.9-2 2-2 2 .9 2 2-.9 2-2 2zm6 .2C18 6.57 15.35 4 12 4s-6 2.57-6 6.2c0 2.34 1.95 5.44 6 9.14 4.05-3.7 6-6.8 6-9.14zM12 2c4.2 0 8 3.22 8 8.2 0 3.32-2.67 7.25-8 11.8-5.33-4.55-8-8.48-8-11.8C4 5.22 7.8 2 12 2z"/></svg>
+				</button>`)	
+				: $(`<button class='go-to-scene-portal portalButton'>
+					<span class="material-symbols-outlined">
+						map_search
+					</span>
+				</button>`)	
+
+			addPortalCell(portalRow, locatePortal);
+			
+			const nameInput = $(`<input type='text' class='portal-name' placeholder='Portal Name' value='${portal.token?.options?.name ?? ''}' />`);
+			addPortalCell(portalRow, nameInput);
+			
+			const checkboxShowName = $(`<input class="portal-show-name" type='checkbox' id="showName_${portalId}" ${portal.token?.options?.alwaysshowname ? 'checked' : ''}></input>`)
+			addPortalCell(portalRow, checkboxShowName);
+
+			const placeLinkedPortalButton = $(`<button class='place-linked-portal portalButton'><svg class="findSVG" width="24px" height="24px" viewBox="-2 -2 22 24" xmlns="http://www.w3.org/2000/svg" "=""><path fill-rule="evenodd" clip-rule="evenodd" d="M7.2 10.8V18h3.6v-7.2H18V7.2h-7.2V0H7.2v7.2H0v3.6h7.2z"></path></svg></button>`);
+			addPortalCell(portalRow, placeLinkedPortalButton);
+			const copyPortalButton = $('<button class="copy-portal-id portalButton" style="font-size:10px;"><span class="material-symbols-outlined">link</span></button>')
+					
+			addPortalCell(portalRow, copyPortalButton);
+			const portalSettingsButton = $(`<button class="portal-settings portalButton" style="font-size:10px;"><span class="material-symbols-outlined">more_vert</span></button>`);
+				
+			addPortalCell(portalRow, portalSettingsButton);
+			table.append(portalRow);
+		}
+	}
+
+	const locatePortal = function(el){
+		const id = $(el).closest('.portal-entry').attr('data-id');
+		window.TOKEN_OBJECTS[id]?.highlight()
+	};
+	const goToScene = function(el){
+		const id = $(el).closest('.portal-entry').attr('data-id');
+		const sceneId = window.portalsInConfig[id].sceneId;
+		window.MB.sendMessage("custom/myVTT/switch_scene", { sceneId: sceneId, switch_dm: true });
+		window.TELEPORTER_PASTE_BUFFER = {
+			'targetToken': id,
+			'tokens': {}
+		}
+		$("#scenes-panel .dm_scenes_button.selected-scene").removeClass("selected-scene");
+		$(`#scenes-panel [data-scene-id="${sceneId}"] .dm_scenes_button`).addClass("selected-scene");				
+	};
+
+
+	const placeLinkedPortal = function(el){
+		const portalId = $(el).closest('.portal-entry').attr('data-id');
+		const portal = window.portalsInConfig[portalId];
+	
+		const wall = window.portalsInConfig[portalId].portalWall;
+		
+		let scale = window.CURRENT_SCENE_DATA.scale_factor != undefined ? window.CURRENT_SCENE_DATA.scale_factor/portal.token.options.scaleCreated : 1/portal.token.options.scaleCreated ;
+		$('#select-button').click();
+		$('#tokenOptionsClickCloseDiv').click();
+		let target = $("#temp_overlay, #fog_overlay, #VTT, #black_layer");	
+		$("#temp_overlay").css('z-index', '50');
+		let canvas = document.getElementById("temp_overlay");
+		let context = canvas.getContext("2d");
+		target.css('cursor', 'crosshair');
+		target.off('mousemove.drawTele').on('mousemove.drawTele', function(e){
+			clear_temp_canvas();
+			let brushpoints = [];
+			let [endX, endY] = get_event_cursor_position(e);
+			let [rectX, rectY] = [endX - window.CURRENT_SCENE_DATA.hpps/2, endY-window.CURRENT_SCENE_DATA.vpps/2]
+			context.setLineDash([5, 5])
+			drawRect(context, rectX, rectY, window.CURRENT_SCENE_DATA.hpps, window.CURRENT_SCENE_DATA.vpps, '#fff', false)
+			if(window.TOKEN_OBJECTS[portalId] != undefined){
+				let [originX, originY] = [(parseInt(window.TOKEN_OBJECTS[portalId].options.left)+25)*scale, (parseInt(window.TOKEN_OBJECTS[portalId].options.top)+25)*scale]
+							
+				endX = endX - (endX-originX)*0.03;
+				endY = endY - (endY-originY)*0.03;
+				brushpoints.push({x:originX, y:originY}); // 4 points so arrow head works
+				brushpoints.push({x:originX, y:originY});
+				brushpoints.push({x:originX, y:originY});
+				brushpoints.push({x:originX, y:originY});
+				// draw a dot
+				brushpoints.push({x:endX, y:endY});
+				
+
+				drawBrushArrow(context, brushpoints,'#fff',6, undefined, 'dash');
+			}
+
+			context.setLineDash([])
+		});
+		target.off('mouseup.setTele touchend.setTele').on('mouseup.setTele touchend.setTele', function(e){
+			if ( e.button == 2) {
+				return;
+			}
+
+			const [mouseX, mouseY] = get_event_cursor_position(e);
+			const [originX, originY] = [(parseInt(portal.token.options.left)+25)*scale, (parseInt(portal.token.options.top)+25)*scale]
+			
+			let data = ['line',
+						'wall',
+						wall[2],
+						mouseX-5,
+						mouseY,
+						mouseX+5,
+						mouseY,
+						12,
+						window.CURRENT_SCENE_DATA.scale_factor,
+						wall[9],
+						(wall[10] != undefined ? wall[10] : ""),
+						(wall[11] != undefined ? wall[11] : "")
+			]
+			window.DRAWINGS.push(data);
+			pushWallUndo({
+				undo: [[...data]],
+			})
+			let clonePortalId = `${mouseX-5}${mouseY}${mouseX+5}${mouseY}${window.CURRENT_SCENE_DATA.id}`.replaceAll('.','') 
+			let teleporterCoords;
+			if(window.CURRENT_SCENE_DATA.id != portal.sceneId){
+				teleporterCoords = {'linkedPortalId': portalId, 'sceneId': portal.sceneId}
+				const oldPortalCoords = {'linkedPortalId': clonePortalId, 'sceneId': window.CURRENT_SCENE_DATA.id};
+				portal.token.options.teleporterCoords = oldPortalCoords;
+				portal.token.debounceSyncMessage($.extend(true, {}, portal.token.options), portal.sceneId);
+				if(window.all_token_objects[portalId] != undefined){
+					window.all_token_objects[portalId].options.teleporterCoords = oldPortalCoords
+				}
+			} else{
+				teleporterCoords = {
+					'left': originX,
+					'top': originY,
+					'scale': window.CURRENT_SCENE_DATA.scale_factor != undefined ? window.CURRENT_SCENE_DATA.scale_factor : 1
+				}
+				window.TOKEN_OBJECTS[portalId].options.teleporterCoords = {'left': mouseX, 'top': mouseY, 'scale': window.CURRENT_SCENE_DATA.scale_factor != undefined ? window.CURRENT_SCENE_DATA.scale_factor : 1}
+				if(window.all_token_objects[portalId] != undefined){
+					window.all_token_objects[portalId].options.teleporterCoords = {'left': mouseX, 'top': mouseY, 'scale': window.CURRENT_SCENE_DATA.scale_factor != undefined ? window.CURRENT_SCENE_DATA.scale_factor : 1}
+				}
+				window.TOKEN_OBJECTS[portalId].place(0);
+				window.TOKEN_OBJECTS[portalId].sync();
+			}
+			
+			let options = {
+				...default_options(),
+				left: `${mouseX-25}px`,
+				top: `${mouseY-25}px`,
+				id: clonePortalId,
+				vision:{
+					feet: 0,
+					color: `rgba(0, 0, 0, 0)`
+				},
+				devilsight:{
+					feet: 0,
+					color: `rgba(0, 0, 0, 0)`
+				},
+				truesight:{
+					feet: 0,
+					color: `rgba(0, 0, 0, 0)`
+				},
+				imgsrc: `data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=`,
+				type: 'door',
+				size: 50,
+				scaleCreated: window.CURRENT_SCENE_DATA.scale_factor,
+				auraislight: false,
+				alwaysshowname: window.TOKEN_SETTINGS.alwaysshowname != undefined ? window.TOKEN_SETTINGS.alwaysshowname : false,
+				teleporterCoords
+			};
+			if(window.TOKEN_OBJECTS[clonePortalId] == undefined){
+				window.ScenesHandler.create_update_token(options);
+			}else {
+				window.TOKEN_OBJECTS[clonePortalId] = options;
+			}
+			window.TOKEN_OBJECTS[clonePortalId].place(0);
+			window.TOKEN_OBJECTS[clonePortalId].sync();
+			redraw_light_walls();
+			sync_drawings();
+			open_portal_config();
+			clear_temp_canvas();
+			target.off('mouseup.setTele touchend.setTele');
+			target.off('mousemove.drawTele')
+			$("#temp_overlay").css('z-index', '25');
+		});
+
+	};
+	const changeName = function(el){
+		const input = $(el);
+		const newName = input.val();
+		const portalId = input.closest('.portal-entry').attr('data-id');
+		const portal = window.portalsInConfig[portalId];
+		portal.token.options.name = newName;
+		portal.token.debounceSyncMessage($.extend(true, {}, portal.token.options), portal.sceneId);
+		if(window.all_token_objects[portalId] != undefined){
+			window.all_token_objects[portalId].options.name = newName;
+		}
+		if(window.TOKEN_OBJECTS[portalId] != undefined){
+			window.TOKEN_OBJECTS[portalId].options.name = newName;
+			window.TOKEN_OBJECTS[portalId].place(0);
+		}
+	}
+	const changeShowName = function(el){
+
+		const input = $(el);
+		const checked = input.prop('checked');
+		const portalId = input.closest('.portal-entry').attr('data-id');
+		const portal = window.portalsInConfig[portalId];
+		portal.token.options.alwaysshowname = checked;
+		portal.token.debounceSyncMessage($.extend(true, {}, portal.token.options), portal.sceneId);
+		if(window.all_token_objects[portalId] != undefined){
+			window.all_token_objects[portalId].options.alwaysshowname = checked;
+		}
+		if(window.TOKEN_OBJECTS[portalId] != undefined){
+			window.TOKEN_OBJECTS[portalId].options.alwaysshowname = checked;
+			window.TOKEN_OBJECTS[portalId].place(0);
+		}
+	};
+
+	const copyPortalId = function(el){
+		const id = $(el).closest('.portal-entry').attr('data-id');	
+		const sceneId = window.portalsInConfig[id].sceneId;
+		navigator.clipboard.writeText(`${id};${sceneId}`);
+		showTempMessage('Portal ID copied to clipboard');
+	}
+	const portalSettings = function(el, e){
+		e.stopPropagation();
+		const id = $(el).closest('.portal-entry').attr('data-id');
+		const sceneId = window.portalsInConfig[id].sceneId;
+
+		//have menu open to the right of click instead of left as it would for tokens
+		if(e.touches != undefined){
+			e.touches[0].clientX += 230;
+		}else{
+			e.clientX += 230;
+		}
+
+		if(sceneId != window.CURRENT_SCENE_DATA.id){
+			token_context_menu_expanded([id], e, window.portalsInConfig[id])
+			return;
+		}
+		token_context_menu_expanded([id], e)
+		return;
+	}
+
+	
+
+	listing.off('change.portalInputs input.portalInputs').on('change.portalInputs input.portalInputs', '.portal-name, .portal-show-name', function(){
+		const classList = this.classList;
+		if(classList.contains('portal-name')){
+			changeName(this);
+			return;
+		} else if(classList.contains('portal-show-name')){
+			changeShowName(this);
+			return;
+		}
+	})
+
+	listing.off('pointerdown.portalButtons').on('pointerdown.portalButtons', '.locate-portal, .go-to-scene-portal, .copy-portal-id, .place-linked-portal, .portal-settings', function(event){
+		const classList = this.classList;
+		if(classList.contains('locate-portal')){
+			locatePortal(this);
+			return;
+		} else if(classList.contains('go-to-scene-portal')){
+			goToScene(this);
+			return;
+		} else if(classList.contains('place-linked-portal')){
+			placeLinkedPortal(this);
+			return;
+		} else if(classList.contains('copy-portal-id')){
+			copyPortalId(this);
+			return;
+		} else if(classList.contains('portal-settings')){
+			portalSettings(this, event);
+			return;
+		}
+		
+	})
+	listing.off('pointerdown.closeTokenMenu').on('pointerdown.closeTokenMenu', function(event){
+		close_token_context_menu();
+	})
+	
+	listing.off('mouseenter.locatePortal, focusin.locatePortal').on('mouseenter.locatePortal, focusin.locatePortal', '.portal-entry', function(){
+		const row = $(this);
+		const id = row.attr('data-id');
+		$(`.door-button[data-id="${id}"]`).addClass('tokenselected');
+	})
+	listing.off('mouseleave.locatePortal, focusout.locatePortal').on('mouseleave.locatePortal, focusout.locatePortal', '.portal-entry', function(){
+		const row = $(this);
+		const id = row.attr('data-id');
+		if(row.find('input.portal-name:focus').length>0)
+			return;
+		$(`.door-button[data-id="${id}"]`).removeClass('tokenselected');
+	})
+
+
+	
 }
 /*
 Clears and redraws all walls from window.DRAWINGS, also redraws wall heights if present.
@@ -2345,7 +2843,15 @@ function redraw_light_walls(options = {clearCanvas: true, editingWallPoints: fal
 								
 							if(tokenObject?.options?.teleporterCoords?.linkedPortalId != undefined){
 								copy_selected_tokens(tokenObject.options.teleporterCoords.linkedPortalId);
-
+								forSelTokens((token,id) => {
+									token.selected = true;
+									token.options.deleteableByPlayers = true;
+								});
+								delete_selected_tokens();
+								
+								window.MB.sendMessage('custom/myVTT/highlight', {
+									id: tokenObject.options.id
+								});
 								if(!window.DM){
 									async function teleportScene(tokenObject){
 										let currentScene = await AboveApi.getCurrentScene(true);
@@ -2368,9 +2874,12 @@ function redraw_light_walls(options = {clearCanvas: true, editingWallPoints: fal
 										window.MB.sendMessage("custom/myVTT/update_dm_player_scenes", {splitPlayerScenes: window.splitPlayerScenes});
 									}
 									teleportScene(tokenObject);
+									
 								}
 								else{
 									window.MB.sendMessage("custom/myVTT/switch_scene", { sceneId: tokenObject.options.teleporterCoords.sceneId, switch_dm: true });
+									$("#scenes-panel .dm_scenes_button.selected-scene").removeClass("selected-scene");
+									$(`#scenes-panel [data-scene-id="${tokenObject.options.teleporterCoords.sceneId}"] .dm_scenes_button`).addClass("selected-scene");
 								}
 							}
 							else if(tokenObject?.options?.teleporterCoords != undefined){
@@ -2384,19 +2893,21 @@ function redraw_light_walls(options = {clearCanvas: true, editingWallPoints: fal
 								
 
 									curr.place(0);
-									let optionsClone = $.extend(true, {}, curr.options);
 									if(shiftHeld){
-										optionsClone.speedAnim = true;
+										curr.options.speedAnim = true;
 									}
 									
 									if(!alreadyHighlighted){
 										if(shiftHeld){					
-											optionsClone.highlightCenter = true;
+											curr.options.highlightCenter = true;
 										}
 										alreadyHighlighted = true;
 										curr.highlight();
 									}
-									curr.sync(optionsClone);
+									
+									curr.sync();
+									delete curr.options.speedAnim;
+									delete curr.options.highlightCenter 
 								})
 							}
 							return;
@@ -2595,9 +3106,6 @@ function getVisionBlockingTokenWalls(){
 			(window.TOKEN_OBJECTS[tokenId].options.share_vision && is_spectator_page()) ||
 			(playerTokenId == undefined && window.TOKEN_OBJECTS[tokenId].options.itemType == 'pc') 
 		
-		if ((!window.SelectedTokenVision || window.CURRENTLY_SELECTED_TOKENS.includes(tokenId)) && sharedVision) {
-			continue;
-		}
 		
 	
 
@@ -3038,7 +3546,9 @@ const [wall_snap, clear_wall_snap] = function () {
 	}
 	function wall_snap(x, y, limit) {
 		if(current_wall_snap_points === null) current_wall_snap_points = collect_wall_snap_points();
-    		if(!limit) limit = window.CURRENT_SCENE_DATA.hpps / 2;
+		    const zoom = Math.max(1, window.ZOOM);
+			const minLimit = Math.min(window.CURRENT_SCENE_DATA.hpps/2, 15 * window.CURRENT_SCENE_DATA.scale_factor)/zoom
+    		if(!limit) limit = Math.max(5, minLimit);
 		for(let i=0; i<current_wall_snap_points.length; i++) {
 			const [px, py] = current_wall_snap_points[i];
 			const pdist = Math.sqrt(Math.pow(px - x,2) + Math.pow(py - y, 2));
@@ -3167,7 +3677,7 @@ function drawing_mousedown(e) {
 		context.setLineDash([10, 5])
 		if (e.which == 1) {
 			$("#temp_overlay").css('cursor', 'crosshair');
-			$("#dragbox").css('z-index', '50');
+			$("#temp_overlay, #dragbox").css('z-index', '50');
 		}		
 	}
 	else if(window.DRAWFUNCTION === 'elev'){
@@ -4105,6 +4615,9 @@ function drawing_mouseup(e) {
 			redraw_light();
 			redraw_fog(); // could limit this to point line of sight tool drawings
 		}
+		if($('#portal_config_window').length>0){
+			open_portal_config();
+		}
 		redraw_elev();
 		redraw_drawn_light();
 		redraw_drawings();
@@ -4625,7 +5138,7 @@ function drawing_mouseup(e) {
 				}
 				else if(window.TOKEN_OBJECTS[tokenId] !== undefined){
 					window.TOKEN_OBJECTS[tokenId].options.scaleCreated = window.DRAWINGS[index][8];
-					window.TOKEN_OBJECTS[tokenId].sync($.extend(true, {}, window.TOKEN_OBJECTS[tokenId].options));		
+					window.TOKEN_OBJECTS[tokenId].sync();		
 
 					window.selectedWalls[i].pt1 = {'x':x1*adjustedScale, 'y':y1*adjustedScale};
 					window.selectedWalls[i].pt2 = {'x':x2*adjustedScale, 'y':y2*adjustedScale}
@@ -4682,6 +5195,7 @@ function drawing_mouseup(e) {
 			curr.selected = (shiftHeld && curr.selected == true) || (fullyInside ? isRotatedSquareInsideRect : intersectsRotatedSquare) (
 				{x:x0, y:y0, width:x1-x0, height: y1-y0}, CX, CY, size, R);
 		}
+		$("#temp_overlay").css('z-index', '25');
 		$("#dragbox").css('z-index', '');
 		draw_selected_token_bounding_box();
 	}
@@ -4934,7 +5448,7 @@ function get_draw_data(button, menu){
  * data-function - the drawing function, draw/erase/text-erase/measure/select/hide/reveal
  */
 function handle_drawing_button_click() {
-
+	stop_drawing();
 	$(".drawWidthSlider").on("input change blur", function() {
 		window.LINEWIDTH = parseInt($(this).val());
 	});
@@ -5009,6 +5523,7 @@ function handle_drawing_button_click() {
 			
 		}
 		let target =  $("#temp_overlay, #black_layer")
+
 		data = {
 			clicked:$(clicked),
 			menu:$(menu)
@@ -5291,6 +5806,50 @@ function drawBrushArrow(ctx, points, style, lineWidth=6, scale=window.CURRENT_SC
 	drawPolygon(ctx, arrowPoints, style, false, Math.max(lineWidth, 1), undefined, undefined, scale);
 }
 
+function insetPolygonVertices(points, insetAmount) {
+    if (points.length < 3) return points;
+    
+    const insetPoints = [];
+    
+    for (let i = 0; i < points.length; i++) {
+        const prev = points[(i - 1 + points.length) % points.length];
+        const curr = points[i];
+        const next = points[(i + 1) % points.length];
+        
+        const prevDir = { x: curr.x - prev.x, y: curr.y - prev.y };
+        const nextDir = { x: next.x - curr.x, y: next.y - curr.y };
+        
+        const prevLen = Math.sqrt(prevDir.x * prevDir.x + prevDir.y * prevDir.y);
+        const nextLen = Math.sqrt(nextDir.x * nextDir.x + nextDir.y * nextDir.y);
+        
+        if (prevLen === 0 || nextLen === 0) {
+            insetPoints.push(curr);
+            continue;
+        }
+        
+        prevDir.x /= prevLen;
+        prevDir.y /= prevLen;
+        nextDir.x /= nextLen;
+        nextDir.y /= nextLen;
+        
+        const perpPrev = { x: prevDir.y, y: -prevDir.x };
+        const perpNext = { x: nextDir.y, y: -nextDir.x };
+        
+        const bisector = { x: perpPrev.x + perpNext.x, y: perpPrev.y + perpNext.y };
+        const bisectorLen = Math.sqrt(bisector.x * bisector.x + bisector.y * bisector.y);
+        
+        if (bisectorLen > 0.01) {
+            bisector.x /= bisectorLen;
+            bisector.y /= bisectorLen;
+            insetPoints.push({
+                x: curr.x - bisector.x * insetAmount,
+                y: curr.y - bisector.y * insetAmount
+            });
+        }
+    }
+    
+    return insetPoints;
+}
 function drawPolygon (
 	ctx,
 	points,
@@ -5305,13 +5864,10 @@ function drawPolygon (
 ) {
 	if(fill && islight && replacefog){
 		
-
+		ctx.save();
 		ctx.fillStyle = 'rgba(255,255,255,1)';
-		ctx.strokeStyle = 'rgba(0,0,0,1)';
-		
 		ctx.beginPath();
 		let adjustScale = (scale/window.CURRENT_SCENE_DATA.scale_factor)	
-		
 		ctx.moveTo(points[0].x/adjustScale/window.CURRENT_SCENE_DATA.scale_factor, points[0].y/adjustScale/window.CURRENT_SCENE_DATA.scale_factor);
 		ctx.lineWidth = lineWidth;
 		
@@ -5324,13 +5880,8 @@ function drawPolygon (
 		}
 		ctx.closePath();
 		ctx.fill();
-		if(lineWidth>0){
-			ctx.save();
-			ctx.globalCompositeOperation = 'destination-out';
-			ctx.stroke();
-			ctx.restore();
-		}
-	}
+		ctx.restore();
+	}	
 	else{
 		ctx.save();
 		ctx.beginPath();
@@ -5514,19 +6065,20 @@ function clear_temp_canvas(playerId=window.PLAYER_ID){
 	window.temp_context.clearRect(0, 0, window.temp_canvas.width, window.temp_canvas.height); 
 }
 
-function bucketFill(ctx, mouseX, mouseY, fogStyle = 'rgba(0,0,0,0)', fogType = 0, islight = false, distance1 = 10000, distance2, blur = 0, darknessMoved = false){
+function bucketFill(ctx, mouseX, mouseY, fogStyle = 'rgba(0,0,0,0)', fogType = 0, islight = false, distance1 = 10000, distance2, blur = 0, darknessMoved = false, allWalls, wallCache){
 	if(window.PARTICLE == undefined){
 		initParticle(new Vector(200, 200), 1);
 	}
 
 	let fog = true;
   	particleUpdate(mouseX, mouseY); // moves particle
-  	let darknessBoundarys = getDarknessBoundarys();
-	let tokenWalls = getVisionBlockingTokenWalls();
-	const allWalls = [...window.walls, ...darknessBoundarys, ...tokenWalls];
+	
+  	
+
+	wallCache = wallCache ?? buildWallCache(allWalls);
 
 	if(!islight){
-		particleLook(ctx, allWalls, undefined, fog, fogStyle, fogType, true, islight, undefined, blur, 0); 
+		particleLook(ctx, allWalls, undefined, fog, fogStyle, fogType, true, islight, undefined, blur, 0, wallCache); 
 		return;
 	}
 
@@ -5578,7 +6130,7 @@ function bucketFill(ctx, mouseX, mouseY, fogStyle = 'rgba(0,0,0,0)', fogType = 0
 		drawPolygon(bucketFillCtx, cachedData.lightPolygon, "#000", true);
 	}
 	else {
-		particleLook(bucketFillCtx, allWalls, undefined, fog, undefined, fogType, false, islight, undefined, 0, 0);
+		particleLook(bucketFillCtx, allWalls, undefined, fog, undefined, fogType, false, islight, undefined, 0, 0, wallCache);
 		drawPolygon(bucketFillCtx, window.lightPolygon, "#000", true);
 		window.lightDrawingLosCache[cacheKey] = {
 			lightPolygon: window.lightPolygon,
@@ -6485,7 +7037,7 @@ When left blank it is treated as infinity, preventing tokens from seeing over th
 				Join Snap
 			</button>
 		</div>`);
-		const objectWallDesc = `Toggle to draw Object Walls in place of regular walls. Object walls block vision at the 2nd wall of this type hit. Does not prevent movement into visible area.
+	const objectWallDesc = `Toggle to draw Object Walls in place of regular walls. Object walls block vision at the 2nd wall of this type hit. Does not prevent movement into visible area.
 
 Example usage: 
 
@@ -6537,6 +7089,13 @@ Example usage:
 		`<div class='ddbc-tab-options--layout-pill menu-option' data-skip="true" data-desc="${showWallsDesc}">
 			<button id='show_walls' data-toggle='true' class='drawbutton menu-option ddbc-tab-options__header-heading ${(window.showWallsToggle) ? "button-enabled" : ''}'>
 				Always Show
+			</button>
+		</div>`);
+	const portalConfigDesc = `Open a window with this scenes portals and info on it. Will keep the window open as you switch scenes to help assign cross scene portal locations.`
+	wall_menu.append(
+		`<div class='ddbc-tab-options--layout-pill menu-option' data-skip="true" data-desc="${portalConfigDesc}">
+			<button id='portal_config' class='menu-option ddbc-tab-options__header-heading'>
+				Portal Config
 			</button>
 		</div>`);
 	wall_menu.append(`
@@ -6609,7 +7168,9 @@ Example usage:
 			sync_drawings({wallsChanged: true});
         }   
 	});
-
+	wall_menu.find("#portal_config").click(function() {
+		open_portal_config();
+	})
 	wall_menu.css("position", "fixed");
 	wall_menu.css("top", "50px");
 	wall_menu.css("width", "110px");
@@ -7465,7 +8026,7 @@ function buildActiveRays(particle, walls, limit) {
 	return combined.map(function(entry){ return entry.ray; });
 }
 
-function particleLook(ctx, walls, lightRadius=100000, fog=false, fogStyle, fogType=0, draw=true, islight=false, auraId=undefined, blur=0, activeRayLimit=0) {
+function particleLook(ctx, walls, lightRadius=100000, fog=false, fogStyle, fogType=0, draw=true, islight=false, auraId=undefined, blur=0, activeRayLimit=0, wallsCache) {
 
 	let lightPolygon = [];
 	let movePolygon = [];
@@ -7508,30 +8069,7 @@ function particleLook(ctx, walls, lightRadius=100000, fog=false, fogStyle, fogTy
 	const particlePosX = window.PARTICLE.pos.x;
 	const particlePosY = window.PARTICLE.pos.y;
 
-	const wallCache = [];
-	for (let j = 0; j < walls.length; j++) {
-		const currWall = walls[j];
-		let wallTop = currWall.wallTop !== undefined && currWall.wallTop !== '' ? parseInt(currWall.wallTop) : Infinity;
-		let wallBottom = currWall.wallBottom !== undefined && currWall.wallBottom !== '' ? parseInt(currWall.wallBottom) : -Infinity;
-		const blocksVision = !notBlockVision.includes(currWall.c);
-		const blocksMove = !notBlockMove.includes(currWall.c);
-		const isTerrainWall = currWall.terrainWall === true;
-		const isDarkness = currWall.darkness === true;
-		const doorId = tokenIsDoor ? `${currWall.a.x}${currWall.a.y}${currWall.b.x}${currWall.b.y}${sceneId}`.replaceAll('.', '') : '';
-
-		wallCache.push({
-			wall: currWall,
-			wallTop: wallTop,
-			wallBottom: wallBottom,
-			blocksVision: blocksVision,
-			blocksMove: blocksMove,
-			isTerrainWall: isTerrainWall,
-			isDarkness: isDarkness,
-			doorId: doorId,
-			tokenId: currWall.tokenId
-		})
-		
-	}
+	const wallCache = wallsCache ?? buildWallCache(walls);
 	
 
 	for (let i = 0; i < activeRays.length; i++) {
@@ -7788,10 +8326,11 @@ function particleLook(ctx, walls, lightRadius=100000, fog=false, fogStyle, fogTy
 			drawPolygon(ctx, lightPolygon, fogStyle, undefined, undefined, undefined, undefined, undefined, true);
 		}	
 	} 	
-	
-	window.lightPolygon = lightPolygon;
+	//inset polygon by wall width so light doesn't seep through walls or reveal doors outside of los.
+	const wallWidth = window.CURRENT_SCENE_DATA.scale_factor || 1;
+	window.lightPolygon = insetPolygonVertices(lightPolygon, wallWidth);
 	window.movePolygon = movePolygon;
-	window.noDarknessPolygon = noDarknessPolygon;
+	window.noDarknessPolygon = insetPolygonVertices(noDarknessPolygon, wallWidth);
 };
 
 function rectLineIntersection(x1, y1, x2, y2, rectx, rexty, rectw, recth) {
@@ -7919,7 +8458,7 @@ function redraw_light(darknessMoved = false, limitActiveRays = 0) {
 	const devilsightCanvasContext = window.devilsightCanvasContext;
 	devilsightCanvasContext.clearRect(0,0,canvasWidth,canvasHeight);
 
-	let darknessBoundarys = getDarknessBoundarys();
+	
 	
 	if(window.walls?.length <= 4 && window.CURRENT_SCENE_DATA.darkness_filter == 0){
 		moveOffscreenCanvasMaskContext.fillStyle = "white";
@@ -7933,21 +8472,19 @@ function redraw_light(darknessMoved = false, limitActiveRays = 0) {
 		moveOffscreenCanvasMaskContext.fillStyle = "white";
 	}
 
-	let light_auras = $(`.light:not([style*='display: none'])>.aura-element.islight:not([style*='visibility: hidden'])`).map(function () {
-		return $(this).attr("data-id");
-	}).get();
-
-
+	const lightAuraElements = document.querySelectorAll('.light:not([style*="display: none"]) > .aura-element.islight:not([style*="visibility: hidden"])');
+	let light_auras = Array.from(lightAuraElements, el => el.getAttribute('data-id')).filter(Boolean);
 
 	let selectedIds = [];
-	let selectedTokens = $('#tokens .tokenselected:not(.isAoe)');
+	let selectedTokens = document.querySelectorAll('#tokens .tokenselected:not(.isAoe)');
 
-	let playerTokenId = $(`.token[data-id*='${window.PLAYER_ID}']`).attr("data-id");
+	const playerTokenElement = document.querySelector(`.token[data-id*='${window.PLAYER_ID}']`);
+	let playerTokenId = playerTokenElement?.getAttribute('data-id');
 
 
 	if (selectedTokens.length > 0) {
 		for (let j = 0; j < selectedTokens.length; j++) {
-			let tokenId = $(selectedTokens[j]).attr('data-id');
+			let tokenId = selectedTokens[j].getAttribute('data-id');
 
 			if (tokenId.includes(window.PLAYER_ID) || window.DM || window.TOKEN_OBJECTS[tokenId].options.share_vision == true || window.TOKEN_OBJECTS[tokenId].options.share_vision == window.myUser || (window.TOKEN_OBJECTS[tokenId].options.share_vision && is_spectator_page()) || (playerTokenId == undefined && window.TOKEN_OBJECTS[tokenId].options.itemType == 'pc'))
 				selectedIds.push(tokenId)
@@ -7962,23 +8499,25 @@ function redraw_light(darknessMoved = false, limitActiveRays = 0) {
 	const adjustScale = (window.CURRENT_SCENE_DATA.scale_factor != undefined) ? window.CURRENT_SCENE_DATA.scale_factor : 1;
 
 	if (window.elevContext == undefined) {
-		window.elevContext = $('#elev_overlay')[0].getContext('2d');
-	}
-
-	const tokenWalls = getVisionBlockingTokenWalls();
-	const allWalls = [...walls, ...darknessBoundarys, ...tokenWalls];
-	const tokenVisionAuras = $(`.aura-element-container-clip [id*='vision_']`);
-
-	if (window.SelectedTokenVision === true) {
-		tokenVisionAuras.toggleClass('notVisible', true);
-	}
-	else if (window.DM && window.SelectedTokenVision !== true) {
-		tokenVisionAuras.toggleClass('notVisible', false);
+		window.elevContext = document.getElementById('elev_overlay').getContext('2d');
 	}
 	
+	let darknessBoundarys = getDarknessBoundarys();
+	const tokenWalls = getVisionBlockingTokenWalls();
+	const allWalls = [...walls, ...darknessBoundarys, ...tokenWalls];
+	const tokenVisionAuras = document.querySelectorAll('.aura-element-container-clip [id*="vision_"]');
+
+	if (!window.DM || window.SelectedTokenVision === true) {
+		tokenVisionAuras.forEach(el => el.classList.add('notVisible'));
+	}
+	else if (window.DM) {
+		tokenVisionAuras.forEach(el => el.classList.remove('notVisible'));
+	}
+	const wallsCache = buildWallCache(allWalls);
 	for (let i = 0; i < light_auras.length; i++) {
 
 		let auraId = light_auras[i];
+		const auraClipContainers = document.querySelectorAll(`.aura-element-container-clip[id='${auraId}']`);
 
 		let found = selectedIds.includes(auraId);
 		let tokenHalfWidth = window.TOKEN_OBJECTS[auraId].sizeWidth() / 2;
@@ -8006,15 +8545,24 @@ function redraw_light(darknessMoved = false, limitActiveRays = 0) {
 			lightPolygon = window.lineOfSightPolygons[auraId].polygon;  // if the token hasn't moved and walls haven't changed don't look for a new poly.
 			movePolygon = window.lineOfSightPolygons[auraId].move;  // if the token hasn't moved and walls haven't changed don't look for a new poly.
 			noDarknessPolygon = window.lineOfSightPolygons[auraId].noDarkness;
+			if(!window.lightAuraClipPolygon[auraId] ||
+				window.lightAuraClipPolygon[auraId].light1?.range !== window.TOKEN_OBJECTS[auraId].options.light1?.feet ||
+				window.lightAuraClipPolygon[auraId].light2?.range !== window.TOKEN_OBJECTS[auraId].options.light2?.feet ||
+				window.lightAuraClipPolygon[auraId].devilsight?.range !== window.TOKEN_OBJECTS[auraId].options.devilsight?.feet ||
+				window.lightAuraClipPolygon[auraId].truesight?.range !== window.TOKEN_OBJECTS[auraId].options.truesight?.feet ||
+				window.lightAuraClipPolygon[auraId].vision?.range !== window.TOKEN_OBJECTS[auraId].options.vision?.feet
+			){
+				clipped_light(auraId, window.lightPolygon, playerTokenId, canvasWidth, canvasHeight, darknessBoundarys, selectedIds.length);
+			}
 		}
 		else {
 
 			check_token_elev(auraId);
 			particleUpdate(tokenPos.x, tokenPos.y); // moves particle
-			if (!found){
+			if (!found || (window.EXPERIMENTAL_SETTINGS.dragLight == true && window.CURRENTLY_SELECTED_TOKENS.length>4)){
 				limitActiveRays = 0;
 			}
-			particleLook(context, allWalls, 100000, undefined, undefined, undefined, false, false, auraId, undefined, limitActiveRays);  // if the token has moved or walls have changed look for a new vision poly. This function takes a lot of processing time - so keeping this limited is prefered.
+			particleLook(context, allWalls, 100000, undefined, undefined, undefined, false, false, auraId, undefined, limitActiveRays, wallsCache);  // if the token has moved or walls have changed look for a new vision poly. This function takes a lot of processing time - so keeping this limited is prefered.
 
 			let pts = window.lightPolygon
 				.map(p => `${p.x / adjustScale}px ${p.y / adjustScale}px`)
@@ -8035,14 +8583,25 @@ function redraw_light(darknessMoved = false, limitActiveRays = 0) {
 				elev: window.TOKEN_OBJECTS[auraId].options.elev
 			}
 
-			$(`.aura-element-container-clip[id='${auraId}']:is(.light, .darkvision)`).css('clip-path', `polygon(${pts})`)
+			if (auraClipContainers.length) {
+				auraClipContainers.forEach(container => {
+					if (container.classList.contains('devilsight') || container.classList.contains('truesight')) return;
+					container.style.clipPath = `polygon(${pts})`
+				});
+			}
 
 			if (window.lineOfSightPolygons[auraId] !== undefined && (window.TOKEN_OBJECTS[auraId].options.devilsight?.feet > 0 || window.TOKEN_OBJECTS[auraId].options.truesight?.feet > 0)) {
 				let pts = window.noDarknessPolygon
 					.map(p => `${p.x / adjustScale}px ${p.y / adjustScale}px`)
 					.join(', ');
 				window.lineOfSightPolygons[auraId].devilsightClip = pts;
-				$(`.aura-element-container-clip[id='${auraId}'].vision:is(.devilsight, .truesight)`).css('clip-path', `polygon(${pts})`)
+				if (auraClipContainers.length) {
+					auraClipContainers.forEach(container => {
+						if (container.classList.contains('devilsight') || container.classList.contains('truesight')) {
+							container.style.clipPath = `polygon(${pts})`;
+						}
+					});
+				}
 
 			}
 
@@ -8050,8 +8609,8 @@ function redraw_light(darknessMoved = false, limitActiveRays = 0) {
 				window.lightAuraClipPolygon = {};
 			}
 			clipped_light(auraId, window.lightPolygon, playerTokenId, canvasWidth, canvasHeight, darknessBoundarys, selectedIds.length);
-
 		}
+
 		lightInLosContext.globalCompositeOperation='lighten';
 		if (window.lightAuraClipPolygon[auraId]?.light !== undefined) {
 			clip_circle_with_polygon(lightInLosContext, window.lightAuraClipPolygon[auraId].middle.x, window.lightAuraClipPolygon[auraId].middle.y, window.lightAuraClipPolygon[auraId].light2.range, window.lightAuraClipPolygon[auraId].light2.color, window.lightPolygon);
@@ -8066,14 +8625,12 @@ function redraw_light(darknessMoved = false, limitActiveRays = 0) {
 			if (!hideVisionWhenNoPlayerToken && !hideVisionWhenPlayerTokenExists) {
 				//when player token does not exist show vision for all pc tokens and shared vision for other tokens. Mostly used by DM's, streams and tabletop tv games.
 				//when player token does exist show your own vision and shared vision.
-				
 
-
-				
-
-				$(`.aura-element-container-clip[id='${auraId}'] [id*='vision_']`).toggleClass('notVisible', false);
+				auraClipContainers.forEach(container => {
+					container.querySelectorAll('[id*="vision_"]').forEach(el => el.classList.remove('notVisible'));
+				});
 			
-				drawPolygon(offscreenContext, window.lightPolygon, 'rgba(255, 255, 255, 1)', true, 2, undefined, undefined, undefined, true, true); //draw to offscreen canvas so we don't have to render every draw and use this for a mask	
+				drawPolygon(offscreenContext, window.lightPolygon, 'rgba(255, 255, 255, 1)', true, 0, undefined, undefined, undefined, true, true); //draw to offscreen canvas so we don't have to render every draw and use this for a mask	
 				drawPolygon(moveOffscreenCanvasMaskContext, window.movePolygon, 'rgba(255, 255, 255, 1)', true, 0, undefined, undefined, undefined, true, true); //draw to offscreen canvas so we don't have to render every draw and use this for a mask
 				if(window.lightAuraClipPolygon[auraId] != undefined){
 					if (window.lightAuraClipPolygon[auraId].darkvision > 0) {
@@ -8208,7 +8765,33 @@ function redraw_light(darknessMoved = false, limitActiveRays = 0) {
 		debounceAudioChecks();
 	}
 }
+function buildWallCache(walls) {
+	const sceneId = window.CURRENT_SCENE_DATA.id;
+	const wallCache = [];
+	for (let j = 0; j < walls.length; j++) {
+		const currWall = walls[j];
+		let wallTop = currWall.wallTop !== undefined && currWall.wallTop !== '' ? parseInt(currWall.wallTop) : Infinity;
+		let wallBottom = currWall.wallBottom !== undefined && currWall.wallBottom !== '' ? parseInt(currWall.wallBottom) : -Infinity;
+		const blocksVision = ![1, 3, 6, 7, 12, 13, '1', '3', '6', '7', '12', '13'].includes(currWall.c);
+		const blocksMove = ![8, 9, 10, 11, 12, 13, '8', '9', '10', '11', '12', '13'].includes(currWall.c);
+		const isTerrainWall = currWall.terrainWall === true;
+		const isDarkness = currWall.darkness === true;
+		const doorId = currWall.b == undefined ? undefined : `${currWall.a.x}${currWall.a.y}${currWall.b.x}${currWall.b.y}${sceneId}`.replaceAll('.', '');
 
+		wallCache.push({
+			wall: currWall,
+			wallTop: wallTop,
+			wallBottom: wallBottom,
+			blocksVision: blocksVision,
+			blocksMove: blocksMove,
+			isTerrainWall: isTerrainWall,
+			isDarkness: isDarkness,
+			doorId: doorId,
+			tokenId: currWall.tokenId
+		});
+	}
+	return wallCache;
+}
 function getTokenVision(tokenId, darknessMoved){
 	if(window.lineOfSightPolygons[tokenId] !== undefined)
 		return window.lineOfSightPolygons[tokenId];
@@ -8291,10 +8874,10 @@ function getDarknessBoundarys(){
 	for(let i = 0; i<darknessAoes.length; i++){
 		const currentAoe = $(darknessAoes[i]);
 
-		const left = parseFloat(currentAoe.css('left'));
-		const top = parseFloat(currentAoe.css('top'));
-		const width = parseFloat(currentAoe.css('width'));
-		const height = parseFloat(currentAoe.css('height'));
+		const left = parseFloat(darknessAoes[i].style.left);
+		const top = parseFloat(darknessAoes[i].style.top);
+		const width = parseFloat(darknessAoes[i].clientWidth);
+		const height = parseFloat(darknessAoes[i].clientHeight);
 		const scale = window.CURRENT_SCENE_DATA.scale_factor != undefined ? window.CURRENT_SCENE_DATA.scale_factor : 1;
 		const cX = (left + width/2);
 		const cY = (top + height/2);
@@ -8368,10 +8951,10 @@ function draw_aoe_to_canvas(targetAoes, ctx, isDarkness = false){
 	for(let i = 0; i<targetAoes.length; i++){
 		let currentAoe = $(targetAoes[i]);
 
-		let left = parseFloat(currentAoe.css('left'));
-		let top = parseFloat(currentAoe.css('top'));
-		let width = parseFloat(currentAoe.css('width'));
-		let height = parseFloat(currentAoe.css('height'));
+		let left = parseFloat(targetAoes[i].style.left);
+		let top = parseFloat(targetAoes[i].style.top);
+		let width = parseFloat(targetAoes[i].style.width);
+		let height = parseFloat(targetAoes[i].style.height);
 		let scale = window.CURRENT_SCENE_DATA.scale_factor != undefined ? window.CURRENT_SCENE_DATA.scale_factor : 1;
 		let halfGrid = window.CURRENT_SCENE_DATA.hpps/2;
 		let divideScale = 1;

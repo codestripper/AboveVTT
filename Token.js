@@ -1,4 +1,4 @@
-const TOKEN_COLORS = ["1A6AFF", "FF7433", "FFD433", "884DFF", "5F0404", "EC8AFF", "00E5FF",
+﻿const TOKEN_COLORS = ["1A6AFF", "FF7433", "FFD433", "884DFF", "5F0404", "EC8AFF", "00E5FF",
 					"000000", "F032E6", "911EB4", //END OF NEW COLORS
 					"800000", "008000", "000080", "808000", "800080", "008080", "808080", "C00000", "00C000", "0000C0",
 					"C0C000", "C000C0", "00C0C0", "C0C0C0", "400000", "004000", "000040",
@@ -31,7 +31,7 @@ const throttleLight = throttle((darknessMoved = false) => {
 	} 
 	requestAnimationFrame(() =>{redraw_light(darknessMoved, 1000)})
 }, 1000/30);
-const throttleTokenCheck = mydebounce(throttle(do_check_token_visibility, 1000/4), 20);
+const throttleTokenCheck = throttle(do_check_token_visibility, 1000/4);
 const debounceStoreExplored = mydebounce((exploredCanvas, sceneId) => {		
 	let dataURI = exploredCanvas.toDataURL('image/jpg')
 
@@ -547,6 +547,12 @@ class Token {
 		delete window.CURRENT_SCENE_DATA.tokens[id];
 		delete window.TOKEN_OBJECTS[id];
 		delete window.ON_SCREEN_TOKENS[id];
+		if($('#portal_config_window').length>0){
+			delete  window.portalsInConfig[id];
+			open_portal_config();
+		}
+	
+		delete window.ON_SCREEN_TOKENS[id];
 		if(!is_player_id(this.options.id)){
 			delete window.all_token_objects[id];
 			if (id in window.JOURNAL.notes) {
@@ -616,8 +622,8 @@ class Token {
 	}
 	isSelectable() {
 		if ((!window.DM && this.options.hidden) || this.options.type == 'door' || this.options.combatGroupToken) return false;
-		const tokenDiv = this.isLineAoe() ? $(`#tokens>div[data-id='${this.options.id}'] [data-img]`) : $(`#tokens>div[data-id='${this.options.id}']`);
-		return tokenDiv.css("pointer-events") != "none" && tokenDiv.css("display") != "none" && !tokenDiv.hasClass("ui-draggable-disabled");
+		const tokenDiv = this.isLineAoe() ? document.querySelector(`#tokens>div[data-id='${this.options.id}'] [data-img]`) : document.querySelector(`#tokens>div[data-id='${this.options.id}']`);
+		return tokenDiv.style.pointerEvents != "none" && tokenDiv.style.display != "none" && !tokenDiv.classList.contains("ui-draggable-disabled");
 	}
 	rotate(newRotation) {
 		if (this.isPlayerLocked()) return; // don't allow rotating if the token is locked
@@ -857,12 +863,12 @@ class Token {
 
 
 	}
-	debounceSyncMessage = mydebounce(function(options) {				
-		window.MB.sendMessage('custom/myVTT/token', options);
+	debounceSyncMessage = mydebounce(function(options, forcedSceneId = undefined){				
+		window.MB.sendMessage('custom/myVTT/token', options, false, forcedSceneId);
 	}, 300);
-	sync(){
+	sync(forcedSceneId = undefined) {
 		const options = $.extend(true, {}, this.options)
-		this.debounceSyncMessage(options);
+		this.debounceSyncMessage(options, forcedSceneId);
 	}
 	place_sync_persist(animationDuration) {
 		this.place(animationDuration);
@@ -1659,7 +1665,7 @@ class Token {
 				} else {
 					cond.append(conditionContainer);
 				}
-				let noteHover = `<div>
+				let noteHover = `<div style="width:100%">
 						<div class="tooltip-header">
 				       	 	<div class="tooltip-header-icon">
 				            
@@ -1687,6 +1693,7 @@ class Token {
 				let hoverConditionTimer;
 				conditionContainer.on({
 					'mouseover': function(e){
+						clearTimeout(hoverConditionTimer);
 						hoverConditionTimer = setTimeout(function () {
 			            	build_and_display_sidebar_flyout(e.clientY, function (flyout) {
 					            flyout.addClass("prevent-sidebar-modal-close"); // clicking inside the tooltip should not close the sidebar modal that opened it
@@ -1747,7 +1754,8 @@ class Token {
 					
 					},
 					'mouseout': function(e){
-						clearTimeout(hoverConditionTimer)
+						clearTimeout(hoverConditionTimer);
+						hoverConditionTimer = undefined;
 						remove_tooltip(500);
 					}
 			
@@ -1811,7 +1819,7 @@ class Token {
 					}
 				}
 				if(conditionDescription != undefined){
-					let noteHover = `<div>
+					let noteHover = `<div style="width:100%">
 									<div class="tooltip-header">
 							       	 	<div class="tooltip-header-icon">
 							            
@@ -1839,6 +1847,7 @@ class Token {
 					let hoverConditionTimer;
 					conditionContainer.on({
 						'mouseover': function(e){
+							clearTimeout(hoverConditionTimer);
 							hoverConditionTimer = setTimeout(function () {
 				            	build_and_display_sidebar_flyout(e.clientY, function (flyout) {
 						            flyout.addClass("prevent-sidebar-modal-close"); // clicking inside the tooltip should not close the sidebar modal that opened it
@@ -1899,7 +1908,7 @@ class Token {
 						
 						},
 						'mouseout': function(e){
-							clearTimeout(hoverConditionTimer)
+							clearTimeout(hoverConditionTimer);
 							remove_tooltip(500);
 						}
 				
@@ -1918,7 +1927,7 @@ class Token {
 					window.JOURNAL.display_note(self.options.id);
 				})
 
-				let noteHover = `<div>
+				let noteHover = `<div style="width:100%"> 
 									<div class="tooltip-header">
 							       	 	<div class="tooltip-header-icon">
 							            
@@ -1947,6 +1956,7 @@ class Token {
 				const tokenId=this.options.id;
 				conditionContainer.on({
 					'mouseover': function(e){
+						clearTimeout(hoverNoteTimer);
 						hoverNoteTimer = setTimeout(function () {
 			            	build_and_display_sidebar_flyout(e.clientY, async function (flyout) {
 					            flyout.addClass("prevent-sidebar-modal-close"); // clicking inside the tooltip should not close the sidebar modal that opened it
@@ -2017,7 +2027,8 @@ class Token {
 					
 					},
 					'mouseout': function(e){
-						clearTimeout(hoverNoteTimer)
+						clearTimeout(hoverNoteTimer);
+						hoverNoteTimer = undefined;
 						remove_tooltip(500);
 					}
 			
@@ -2079,13 +2090,13 @@ class Token {
 					if(!window.DM && (ctxImageData.height < top || ctxImageData.width < left || left < 0 || top < 0)){
 						canMove=false
 					}
-					else{
-						const pixeldata = getPixelFromImageData(ctxImageData, left, top);	
+					else{							
+						const pixeldata = window.EXPERIMENTAL_SETTINGS.dragLight == true ? window.moveOffscreenCanvasMaskContext.getImageData(left, top, 1, 1).data : getPixelFromImageData(ctxImageData, left, top);	
 						
 						if(pixeldata[0]<253 || pixeldata[1]<253 || pixeldata[2]<253){
 							canMove = false;
 						}
-					}``
+					}
 
 					
 					if (canMove){	
@@ -2100,37 +2111,31 @@ class Token {
 					}
 				}
 			}
-			const $placedToken = $(placedToken);
 			//we round css values at the final step to prevent sub pixel rendering which causes blurriness or stetching the token image
-			$placedToken.css({
-				'left': `${Math.round(tokenX)}px`,
-				'top': `${Math.round(tokenY)}px`
-			});
+			placedToken.style.left = `${Math.round(tokenX)}px`;
+			placedToken.style.top = `${Math.round(tokenY)}px`;
+
 			token.options.left = `${Math.round(tokenX)}px`;
 			token.options.top = `${Math.round(tokenY)}px`;
 								
 			const tokMidLeft = Math.round(tokenX) + parseFloat(token.sizeWidth())/2
 			const tokMidTop = Math.round(tokenY) + parseFloat(token.sizeHeight())/2
 			const idReplaced = token.options.id.replaceAll("/", "");
-			let selEl = $(`#aura_${idReplaced}, #light_${idReplaced}, #vision_${idReplaced}, #vision_devilsight_${idReplaced}, #vision_truesight_${idReplaced}, [data-darkness='darkness_${idReplaced}']`);
-			selEl.each((i, el) => {
-				const $el = $(el);
-				const selElWidth = parseFloat($el.css('width')) / 2;
-				const selElHeight = parseFloat($el.css('height')) / 2;
+			
+			const selEls = window.tokenVisionQuery[idReplaced] ? window.tokenVisionQuery[idReplaced].elements : document.querySelectorAll(`#aura_${idReplaced}, #light_${idReplaced}, #vision_${idReplaced}, #vision_devilsight_${idReplaced}, #vision_truesight_${idReplaced}, [data-darkness='darkness_${idReplaced}']`);
+			selEls.forEach((el) => {
+				const selElWidth = parseFloat(el.style.width) / 2;
+				const selElHeight = parseFloat(el.style.height) / 2;
 				const auraLeft = tokMidLeft / window.CURRENT_SCENE_DATA.scale_factor - selElWidth;
 				const auraTop = tokMidTop / window.CURRENT_SCENE_DATA.scale_factor - selElHeight;
-				$el.css({
-					'left': `${auraLeft}px`,
-					'top': `${auraTop}px`
-				});
+				el.style.left = `${auraLeft}px`;
+				el.style.top = `${auraTop}px`;
 			})
-			selEl = $(`[data-notatoken='notatoken_${token.options.id}']`);
-			if (selEl.length > 0) {
-				selEl.css({
-					'left': `${parseFloat(token.options.left) / window.CURRENT_SCENE_DATA.scale_factor}px`,
-					'top': `${parseFloat(token.options.top) / window.CURRENT_SCENE_DATA.scale_factor}px`
-				});
-			}	
+			const notATokenEls = window.tokenVisionQuery[idReplaced] ? window.tokenVisionQuery[idReplaced].notATokenElements : document.querySelectorAll(`[data-notatoken='notatoken_${token.options.id}'], [data-darkness='darkness__${token.options.id}']`);
+			notATokenEls.forEach((selEl) => {
+				selEl.style.left = `${parseFloat(token.options.left) / window.CURRENT_SCENE_DATA.scale_factor}px`,
+				selEl.style.top = `${parseFloat(token.options.top) / window.CURRENT_SCENE_DATA.scale_factor}px`
+			})	
 			return canMove;
 		} catch(error){
 			showError(error);
@@ -2215,8 +2220,8 @@ class Token {
 		
 
 	}
-	place(animationDuration) {
-		try{
+	throttlePlace = throttle((animationDuration) => {
+				try{
 			if(!this.options.id.includes('exampleToken') && (isNaN(parseFloat(this.options.left)) || isNaN(parseInt(this.options.top)))){// prevent errors with NaN positioned tokens - delete them as catch all. 
 				this.options.deleteableByPlayers = true;
 				this.delete();
@@ -3078,11 +3083,14 @@ class Token {
 				
 
 				tok.draggable({
+					iframeFix: false,
+					grid: [1, 1],
 					stop: function (event) {
 						event.stopPropagation();
 						//$("#VTT").css('--grid-overlay-on-tmp', '0');	commented out as it's not consistent and is confusing can reasses if we enable other options for grid over			
 						window.DRAGGING = false;
 						window.enable_window_mouse_handlers();
+						delete window.tokenVisionQuery;
 						ctxImageData = null;
 						if(window.TOKEN_OBJECTS[self.options.id] != undefined){
 							self.sync();
@@ -3099,7 +3107,7 @@ class Token {
 								let curr = window.TOKEN_OBJECTS[id];
 								if (curr != undefined){
 									curr.sync();
-									if (curr.options?.darkness === true)
+									if (curr.options?.darkness === true || curr.options.tokenWall)
 										darknessMoved = true;
 									if (window.CURRENT_SCENE_DATA.disableSceneVision == 1 && !window.DM)
 										check_single_token_visibility(curr.options?.id);
@@ -3107,12 +3115,8 @@ class Token {
 							}												
 						}
 						if(darknessMoved){
-							redraw_light(darknessMoved);
 							redraw_drawn_light(darknessMoved);
-							if(window.EXPERIMENTAL_SETTINGS.dragLight == true)
-								throttleLight();
-							else
-								debounceLightChecks()
+							redraw_light(darknessMoved);
 						}
 						//remove cover for smooth drag
 						$('.iframeResizeCover').remove();
@@ -3193,29 +3197,32 @@ class Token {
 							
 							window.playerTokenAuraIsLight = (window.CURRENT_SCENE_DATA.disableSceneVision == '1') ? false : (playerTokenId == undefined) ? true : window.TOKEN_OBJECTS[playerTokenId].options.auraislight; // used in drag to know if we should check for wall/LoS collision.
 							window.dragSelectedTokens = $(`#tokens .token.tokenselected:not(.ui-draggable-disabled), #tokens .token[data-group-id='${self.options.groupId}']`); //set variable for selected tokens that we'll be looking at in drag, deleted in stop.
-							
+							window.tokenVisionQuery = {};
 							const setDataPos = (id) =>{
 								const idReplaced = id.replaceAll("/", "");
-								let selEl = $(`#aura_${idReplaced}, #light_${idReplaced}, #vision_${idReplaced}, #vision_devilsight_${idReplaced}, #vision_truesight_${idReplaced}, [data-darkness='darkness_${idReplaced}']`);
-								selEl.each((i, el) => {
-									const $el = $(el);
-									$el.attr({
-										'data-left': $el.css("left").replace("px", ""),
-										"data-top": $el.css("top").replace("px", "")
-									});
-								})
-								selEl = $(`[data-notatoken='notatoken_${id}']`);
-								if (selEl.length > 0) {
-									selEl.attr({
-										'data-left': selEl.css("left").replace("px", ""),
-										"data-top": selEl.css("top").replace("px", "")
-									});
-								}	
+								const selEls = document.querySelectorAll(`#aura_${idReplaced}, #light_${idReplaced}, #vision_${idReplaced}, #vision_devilsight_${idReplaced}, #vision_truesight_${idReplaced}`);
+								
+								selEls.forEach((el) => {
+									const style = getComputedStyle(el);
+									el.setAttribute('data-left', style.left.replace("px", ""));
+									el.setAttribute('data-top', style.top.replace("px", ""));
+								});
+								const notATokenEls = document.querySelectorAll(`[data-notatoken='notatoken_${id}'], [data-darkness='darkness_${id}']`);
+								notATokenEls.forEach((el) => {
+									const style = getComputedStyle(el);
+									el.setAttribute('data-left', style.left.replace("px", ""));
+									el.setAttribute('data-top', style.top.replace("px", ""));
+								});
+
+								window.tokenVisionQuery[id] = {
+									elements: selEls,
+									notATokenElements: notATokenEls
+								};
 							}
 							setDataPos(self.options.id);
 							if (self.selected && window.dragSelectedTokens.length>1 && !shiftHeld) {
 								for (let tok of window.dragSelectedTokens){
-									let id = $(tok).attr("data-id");
+									let id = tok.getAttribute("data-id");
 									window.TOKEN_OBJECTS[id].selected = true;
 									$(`:is(#combat_area, #combat_area_carousel) tr[data-target='${id}']`).toggleClass('selected-token', getCombatTrackerSettings().ct_selected_token == '1');
 							
@@ -3264,7 +3271,7 @@ class Token {
 									window.BEGIN_MOUSEX = tokenMidX;
 									window.BEGIN_MOUSEY = tokenMidY;
 									if (!self.options.disableborder){
-										WaypointManager.drawStyle.color = window.color ? window.color : $(tok).css("--token-border-color");
+										WaypointManager.drawStyle.color = window.color ? window.color : tok[0].style["--token-border-color"];
 									}else{
 										WaypointManager.resetDefaultDrawStyle();
 									}
@@ -3317,10 +3324,8 @@ class Token {
 								left: Math.round(tokenPosition.x),
 								top: Math.round(tokenPosition.y)
 							};
-							if(window.EXPERIMENTAL_SETTINGS.dragLight == true){
-								ctxImageData = window.moveOffscreenCanvasMaskContext.getImageData(0, 0, window.moveOffscreenCanvasMaskContext.canvas.width, window.moveOffscreenCanvasMaskContext.canvas.height);
-							}
-							const canMove = self.setTokenDragPos(tokenPosition.x, tokenPosition.y, tok, ctxImageData);
+
+							const canMove = self.setTokenDragPos(tokenPosition.x, tokenPosition.y, tok[0], ctxImageData);
 							if (canMove){	
 								window.oldTokenPosition[self.options.id] = ui.position;				
 							}else{
@@ -3333,7 +3338,7 @@ class Token {
 								let offsetTop = tokenPosition.y - parseFloat(self.orig_top);
 
 								for (let tok of window.dragSelectedTokens){
-									let id = $(tok).attr("data-id");
+									let id = tok.getAttribute("data-id");
 									if (id != self.options.id) {
 										let curr = window.TOKEN_OBJECTS[id];
 										tokenX = offsetLeft + parseFloat(curr.orig_left);
@@ -3574,9 +3579,9 @@ class Token {
 			// No scene loaded!
 			return;
 		}
-	
-
-
+	}, 1000)
+	place(animationDuration) {
+		this.throttlePlace(animationDuration);
 	}
 
 	// key: String, numberRemaining: Number; example: track_ability("1stlevel", 2) // means they have 2 1st level spell slots remaining
@@ -4466,23 +4471,22 @@ function setTokenLight (token, options) {
 					<div class='aura-element darkvision' id="vision_${tokenId}" data-id='${options.id}' style='${visionStyles}'></div>
 				</div>
 			</div>
-			<div class='aura-clip-container devilsight vision'>
-				${parseInt(options.devilsight.feet) > 0 ? `
+			${parseInt(options.devilsight.feet) > 0 ? `
+				<div class='aura-clip-container devilsight vision'>
 					<div class='aura-element-container-clip vision devilsight' style='clip-path: ${devilsightClip};' id='${options.id}'>
 						<div class='aura-element devilsight' id="vision_devilsight_${tokenId}" data-id='${options.id}' style='${devilsightStyles}'></div>
-					</div>` : ""
-				}
-			</div>
-			<div class='aura-clip-container truesight vision'>
-				${parseInt(options.truesight.feet) > 0 ? `
-					<div class='aura-element-container-clip vision truesight' style='clip-path: ${devilsightClip};' id='${options.id}'>
-						<div class='aura-element truesight' id="vision_truesight_${tokenId}" data-id='${options.id}' style='${truesightStyles}'></div>
-					</div>` : ""
-				}
-			</div>`) 
+					</div>
+				</div>` : ""
+			}
+			${parseInt(options.truesight.feet) > 0 ? `<div class='aura-clip-container truesight vision'>
+				<div class='aura-element-container-clip vision truesight' style='clip-path: ${devilsightClip};' id='${options.id}'>
+					<div class='aura-element truesight' id="vision_truesight_${tokenId}" data-id='${options.id}' style='${truesightStyles}'></div>
+					</div>
+				</div>` : ""
+			}
+		`) 
 		
 
-		lightElement.contextmenu(function(){return false;});
 		$("#light_container").prepend(lightElement);
 		if(clippath == undefined){
 			debounceLightChecks();
@@ -4560,14 +4564,6 @@ function setTokenLight (token, options) {
 	else if(options.type == 'door'){
 		tokenVisionLightContainer.css("display", "")
 	}
-	/*
-	if ((options.sight == 'devilsight' || options.sight == 'truesight') && (options.share_vision == true || options.share_vision == window.myUser || (options.share_vision && is_spectator_page()) || options.id.includes(window.PLAYER_ID) || window.DM || (is_player_id(options.id) && playerTokenId == undefined))){
-		tokenGrandparent.find(`.aura-element-container-clip[id='${options.id}']`).toggleClass('devilsight', true);	
-		tokenGrandparent.find(`.aura-element-container-clip[id='${options.id}']`).toggleClass('truesight', options.sight=='truesight');
-	}
-	else{
-		tokenGrandparent.find(`.aura-element-container-clip[id='${options.id}']`).toggleClass(['devilsight', 'truesight'], false);
-	}*/
 
 }
 
@@ -5278,7 +5274,7 @@ function paste_selected_tokens(x, y, teleporter = undefined, teleportedTokenData
 	if(teleporter){
 		for (let i in window.TELEPORTER_PASTE_BUFFER.tokens) {	
 			let options = $.extend(true, {}, window.TELEPORTER_PASTE_BUFFER.tokens[i].options);
-			window.all_token_objects[i].options = options;
+			window.all_token_objects[i] = new Token(options);
             const forceSize = true;
 			const animationDuration = 0;
 			place_token_at_map_point(options, x, y, forceSize, animationDuration);	

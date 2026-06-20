@@ -288,6 +288,7 @@ Mousetrap.bind('shift+w', function () {
 Mousetrap.bind('j', function () {
     if(window.DM){
         $('#snap_walls').toggleClass(['button-enabled', 'ddbc-tab-options__header-heading--is-active']);
+        window.SNAP_WALLS = $('#snap_walls').hasClass('button-enabled');
     }
 });
     
@@ -319,12 +320,13 @@ if(is_spectator_page()){
         sendPointerEvent('#lock_view_button')
     });
 }
-Mousetrap.bind('esc', function () {     //deselect all buttons
+Mousetrap.bind('esc', function (e) {     //deselect all buttons
     clear_temp_canvas();
     close_splash();
     $('#displayedDiceFormula').remove();
     delete window.numpadRollFormulaMod;
     delete window.numpadRollFormula;
+    dialogCloser(e, true);
 
     //reselect the current menu to trigger draw stop/reset, allows cancelling polygons or other drawings
     //ensure menu stays open if it was open, as clicking the button again would close it
@@ -537,7 +539,9 @@ Mousetrap.bind('mod+c', function(e) {
     }
     
 });
-
+Mousetrap.bind('shift+p', function(e) {
+   open_portal_config();
+});
 
 Mousetrap.bind('mod+v', async function(e) {
     if (await avttHandleFilePickerPaste(e)) {

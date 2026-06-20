@@ -1504,6 +1504,7 @@ class JournalManager{
 			                callback: function(itemKey, opt, originalEvent) {
 			                	const copyLink = `[note]${note_id};${self.notes[note_id].title}[/note]`
 			                    navigator.clipboard.writeText(copyLink);
+								showTempMessage('Note tooltip link copied to clipboard');
 				            }   
 		            	};   
 		            	menuItems["copyEmbed"] = {
@@ -1511,6 +1512,7 @@ class JournalManager{
 			                callback: function(itemKey, opt, originalEvent) {
 			                	const copyLink = `[note embed]${note_id};${self.notes[note_id].title}[/note]`
 			                    navigator.clipboard.writeText(copyLink);
+								showTempMessage('Note embed link copied to clipboard');
 				            }   
 		            	};
 	            	}
@@ -2245,79 +2247,8 @@ class JournalManager{
 	    }
 	}
 	block_send_to_buttons(target){
-		const blocks = target.find('img:not(.mon-stat-block__separator-img), .text--quote-box, .rules-text, .block-torn-paper, .read-aloud-text, .dmScreenChunk')
+		const blocks = target.find('img:not(.mon-stat-block__separator-img), video, .text--quote-box, .rules-text, .block-torn-paper, .read-aloud-text, .dmScreenChunk')
 
-		const sendToGamelogButton = $('<button class="block-send-to-game-log"><span class="material-symbols-outlined">login</span></button>')
-
-		
-	
-
-	    const whisper_container=$("<div class='whisper-container'/>");
-
-        for(let i=0; i<window.playerUsers.length; i++){
-			if(whisper_container.find(`input[name='${window.playerUsers[i].userId}']`).length == 0){
-				const randomId = uuid();
-				let whisper_toggle=$(`<input type='checkbox' name='${window.playerUsers[i].userId}'/>`);
-				let whisper_row = $(`<div class='whisper_toggle_row'><label>${window.playerUsers[i].userName}</label></div>`)
-				whisper_toggle.off('click.toggle').on('click.toggle', function(e){
-
-					e.stopPropagation();
-				})
-				whisper_row.find('label').off('click.stopProp').on('click.stopProp', function(e){
-					e.stopPropagation();
-					e.preventDefault();
-					$(this).next('input[type=checkbox]').click();
-				})
-				whisper_row.append(whisper_toggle)
-
-				
-				whisper_container.append(whisper_row);
-			}
-		}
-		sendToGamelogButton.off('contextmenu').on("contextmenu", function(e) {
-			e.preventDefault();
-			e.stopPropagation();
-			const checkedInputs=$(this).find('.whisper-container input:checked');
-	        checkedInputs.click();
-			$(this).find('.whisper-container').toggleClass('visible');
-
-			if($(this).find('.whisper-container').hasClass('visible')){
-		      $(document).on('click.blurWhisperHandle', function(e){
-		        if($(e.target).closest('.whisper-container').length == 0){
-		          $('.whisper-container').toggleClass('visible', false)
-		          $(document).off('click.blurWhisperHandle');
-		        }
-		      })  
-		    }
-		})
-		$(sendToGamelogButton).append(whisper_container);
-		sendToGamelogButton.off('click').on("click", function(e) {
-	        e.stopPropagation();
-	        e.preventDefault();
-	        
-	        let targetBlock = $(e.currentTarget).parent().clone();
-	        targetBlock.find('button.block-send-to-game-log').remove();
-	        targetBlock.find('img').removeAttr('width height style').toggleClass('magnify', true);
-	       	const whisper_container=$(this).find('.whisper-container');
-	        if(whisper_container.hasClass('visible')){
-	        	const checkedInputs = whisper_container.find('input:checked');
-	        	const whisperArray = [];
-	        	checkedInputs.each(function () {
-			       whisperArray.push($(this).attr('name'));
-			  	});
-			  	send_html_to_gamelog(`<p>${targetBlock[0].outerHTML}</p>`, whisperArray)
-	        }
-	        else{
-	        	send_html_to_gamelog(`<p>${targetBlock[0].outerHTML}</p>`);
-	        }
-	        
-	    });
-
-
-		const tables = target.find('table');
-		
-		const allDiceRegex = /(\d+)?d(?:100|20|12|10|8|6|4)((?:kh|kl|ro(<|<=|>|>=|=)|min=)\d+)*/g; // ([numbers]d[diceTypes]kh[numbers] or [numbers]d[diceTypes]kl[numbers]) or [numbers]d[diceTypes]
-       	
    		blocks.wrap(function(i){
 			const container = $(`<div class='note-text' style='position:relative;max-width: 100%;'></div>`)
 			if(blocks[i] instanceof HTMLImageElement){
@@ -2329,18 +2260,21 @@ class JournalManager{
 			}
 			return container;
 		});
-		sendToGamelogButton.clone(true, true).insertAfter(blocks);
+		blocks.each((i, block) => {
+			createSendPlayerButton(block, "login", block instanceof HTMLImageElement || block instanceof HTMLVideoElement).insertAfter(block);			
+		});
+
+		const tables = target.find('table');
+		const allDiceRegex = /(\d+)?d(?:100|20|12|10|8|6|4)((?:kh|kl|ro(<|<=|>|>=|=)|min=)\d+)*/g; // ([numbers]d[diceTypes]kh[numbers] or [numbers]d[diceTypes]kl[numbers]) or [numbers]d[diceTypes]
 		if(allDiceRegex.test($(tables).find('tr:first-of-type>:first-child').text())){
 			let result = $(tables).find(`tbody > tr td:last-of-type`);
 			$(tables).find('td').css({
 				'position': 'relative',
 				'padding-right': '10px'
 			});
-			result.append(sendToGamelogButton.clone(true, true)); 
+			result.each((i, block) =>
+				$(block).append(createSendPlayerButton(block, "login")));
 		}
-
-
-		
 	}
 				   
 	replaceNoteEmbed(text, notesIncluded=[]){
@@ -2520,13 +2454,14 @@ class JournalManager{
 		}
 		const embededIframes = target.find('iframe');
 		for(let i=0; i<embededIframes.length; i++){
-			if(!embededIframes[i].src.startsWith(window.EXTENSION_PATH))
+			if(embededIframes[i].src.includes("youtube")){
+				embededIframes[i].src = embededIframes[i].src.replace(/youtube(-nocookie)?\.com/gi, 'youtube-nocookie.com');
+			}
+			else if(!embededIframes[i].src.startsWith(window.EXTENSION_PATH)){
 				embededIframes[i].src = `${window.EXTENSION_PATH}iframe.html?src=${encodeURIComponent(embededIframes[i].src)}`;
+			}
 		}
 
-
-
-		
 
     	let data = $(target).clone().html();
 
@@ -2662,28 +2597,40 @@ class JournalManager{
             	let eachNumberFound = (input.match(/(?<!<[^>]+)\d+\/day( each)?/gi)) ? parseInt(input.match(/(?<!<[^>]+)[0-9]+(?![0-9]?px)/gi)[0]) : undefined;
             	let slotsNumberFound = (input.match(/(?<!<[^>]+)\d+\w+ level \(\d slots?\)\:/gi)) ? parseInt(input.match(/(?<!<[^>]+)[0-9]+/gi)[1]) : undefined;
             	let spellLevelFound = (slotsNumberFound) ? input.match(/\d+\w+ level/gi)[0] : undefined;
-                let parts = input.split(/((?<!<[^>]+):)/i);
-                let i = parts.length - 1;
-                parts[i] = parts[i].split(/(?<!<[^>]+),(?![^(]*\))/gm);
-                for (let p in parts[i]) {
+				
+				let parts = input.replace(/<(?!\/?(?:span|a)\b)[^>]*>/gi, '').split(/((?<!<[^>]+):)/gi)
+				
+                for (let p=0; p<parts.length; p++) {
+					if(p<=1){
+						parts[p] = `<strong>${parts[p]}</strong>`
+						continue;
+					}
 
-                	if(parts[i][p].match(/^((\s+?)?(<a|<span))/gi) && $(parts[i][p])?.is('a, span[data-spell]'))
-                		continue;
-                	parts[i][p] = parts[i][p].replace(/<(\/)?em>|<(\/)?b>|<(\/)?strong>/gi, '')
-                	let spellName = (parts[i][p].match(/^<a|ignore-abovevtt-formating/gi)) ? $(parts[i][p]).text() : parts[i][p].replace(/<\/?p[a-zA-z'"0-9\s]+?>/g, '').replace(/\s?\[spell\]\s?|\s?\[\/spell\]\s?/g, '').replace('[/spell]', '').	replace(/\s|&nbsp;/g, '');
+					const splitParts = parts[p].split(/(?<!<[^>]+),(?![^(]*\))/gm);
+					for(let part in splitParts){
+						let spellName = (splitParts[part].match(/^(\s+)?<[^>]+>/gi)) ? $(splitParts[part]).text() : splitParts[part].replace(/(\s+)?<[^>]+>/g, '').replace(/\s?\[spell\]\s?|\s?\[\/spell\]\s?/g, '').replace('[/spell]', '').replace(/\s|&nbsp;/g, '');
+						if(splitParts[part].match(/^((\s+?)?(<a|<span))|^$/gi) && $(splitParts[part])?.is('a, span[data-spell]')){
+							if(eachNumberFound){
+								splitParts[part] = `<span class="add-input each" data-number="${eachNumberFound}" data-spell="${spellName}">${splitParts[part]}</span>`
+							}
+							continue;
+						}
+						splitParts[part] = splitParts[part].replace(/<(\/)?[^>]+>/gi, '')
+						
+						if( !(splitParts[part].startsWith('<') || splitParts[part].startsWith('[spell]')) && splitParts[part] && typeof splitParts[part] === 'string') {
+							splitParts[part] = splitParts[part].split('<')[0]
+								.replace(/^/gm, `[spell]`)
+								.replace(/( \(|(?<!\))$)/gm, `[/spell]$1`);
+						}
 
-                   	if( !(parts[i][p].startsWith('<') || parts[i][p].startsWith('[spell]')) && parts[i][p] && typeof parts[i][p] === 'string') {
-                        parts[i][p] = parts[i][p].split('<')[0]
-                            .replace(/^/gm, `[spell]`)
-                            .replace(/( \(|(?<!\))$)/gm, '[/spell]');
-                    }
+						if(eachNumberFound){
+							splitParts[part] = `<span class="add-input each" data-number="${eachNumberFound}" data-spell="${spellName}">${splitParts[part]}</span>`
+						}
+					}
+					parts[p] = splitParts.join(', ');
 
-                    if(eachNumberFound){
-                    	parts[i][p] = `<span class="add-input each" data-number="${eachNumberFound}" data-spell="${spellName}">${parts[i][p]}</span>`
-                    }
                 }
 
-                parts[i] = parts[i].join(', ');
                	input = parts.join('');
                 if(slotsNumberFound){
                 	input = `<span class="add-input slots" data-number="${slotsNumberFound}" data-spell="${spellLevelFound}">${input}</span>`
@@ -3083,7 +3030,41 @@ class JournalManager{
 		}
 
     }
-	
+	getCustomCR(statBlock){
+		if(statBlock == undefined) return 0;
+       
+		statBlock.find('style').remove();
+		statBlock=statBlock[0].innerHTML;
+		let crText = $(statBlock).find('.custom-challenge-rating.custom-stat').text();
+		if(crText == '' || crText == undefined){
+			let searchText = statBlock.replaceAll('mon-stat-block-2024', '').replaceAll(/\&nbsp\;/g,' ')
+
+			let statBlockCR = searchText.matchAll(/[\s>]CR[\s]+([0-9]+(\/[0-9])?)/gi).next()
+			if(statBlockCR.value != undefined){
+			if(statBlockCR.value[1] != undefined)
+				crText = statBlockCR.value[1];
+			} 
+			else{
+			statBlockCR = searchText.matchAll(/[\s>](CR[\W]|challenge)[\s\S]*?[\s>]([0-9]+(\/[0-9])?)/gi).next()
+
+				if(statBlockCR.value != undefined){
+					if(statBlockCR.value[2] != undefined)
+						crText = statBlockCR.value[2];
+				}  
+			}
+		}
+		if(crText == '' || crText == undefined) return 0;
+
+		try{
+			const cr = eval(crText);
+			return cr;
+		}catch(e){
+			console.warn(`Could not parse CR from custom stat block, defaulting to 0. CR text was ${crText}`);
+			return 0;
+		}
+	}
+
+
 	note_visibility(id,visibility){
 		this.notes[id].player=visibility;
 
@@ -4677,6 +4658,15 @@ class JournalManager{
 				self.notes[note_id].plain = tinymce.activeEditor.getContent({ format: 'text' });
 				self.notes[note_id].statBlock = statBlock;
 				self.persist();
+				if(statBlock){
+					const row = $(`#tokens-panel .sidebar-list-item-row[data-id='${note_id}']`);
+					const subtitle = row.find('.sidebar-list-item-row-details-subtitle');
+					subtitle.find('.challenge-rating').remove();
+					const statBlock = $(`<div>${self.notes[note_id].text}</div>`)
+					const cr = window.JOURNAL.getCustomCR(statBlock);
+					subtitle.prepend(`<div class="subtitle-attibute challenge-rating"><span class="plain-text">CR</span>${cr}</div>`)
+				}
+			
 				const dmScreenPageOpen = $('#dmScreenCustomBlock');
 				if(dmScreenPageOpen.length > 0){
 					const openNoteId = dmScreenPageOpen.attr('data-note-id');
