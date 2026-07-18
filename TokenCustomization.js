@@ -554,7 +554,10 @@ class TokenCustomization {
         } else {
             n = this.tokenOptions?.name;
             if (!n) {
-                console.warn("Failed to find the name of a token customization", this);
+                if(this.id.includes("_AboveVTT_Tokens_"))
+                    n = this.id.replace('_AboveVTT_Tokens_', '').replaceAll("_", ' ');
+                else
+                    console.warn("Failed to find the name of a token customization", this);
             }
         }
         return n || "undefined";
@@ -588,6 +591,10 @@ class TokenCustomization {
                 combinedOptions = {...combinedOptions, ...tc.tokenOptions};
             }
         });
+        if(this.name() != "undefined" )
+            combinedOptions.name = this.name();
+        else
+            delete combinedOptions.name;
         return combinedOptions;
     }
 

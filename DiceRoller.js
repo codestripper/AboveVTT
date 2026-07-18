@@ -398,11 +398,11 @@ function adjustRollWithRollBuffs(expression, rollType, $rollButton){
 
         const multiReplaceRegex = targetMultiOptions?.replace;
         const multiReplaceSelector = targetMultiOptions?.replaceType
-        const validMultiButton = (multiReplaceSelector == undefined || multiReplaceSelector?.[rollType] != undefined && $rollButton.closest(multiReplaceSelector[rollType]).length > 0);
+        const validMultiButton = (multiReplaceSelector == undefined || multiReplaceSelector?.[rollBuffKey] != undefined && $rollButton.closest(multiReplaceSelector[rollBuffKey]).length > 0);
         
         const singleReplaceRegex = singleTarget?.replace;
         const singleReplaceSelector = singleTarget?.replaceType;
-        const validSingleButton = singleReplaceSelector == undefined || (singleReplaceSelector?.[rollType] != undefined && $rollButton.closest(singleReplaceSelector[rollType]).length > 0);
+        const validSingleButton = singleReplaceSelector == undefined || (singleReplaceSelector?.[rollBuffKey] != undefined && $rollButton.closest(singleReplaceSelector[rollBuffKey]).length > 0);
        
         if (multiReplaceRegex != undefined && validMultiButton) {
             expression = `${expression.replace(multiReplaceRegex, targetMultiOptions.newRoll)}`   
@@ -848,6 +848,11 @@ class DiceRoller {
             console.warn("clickDiceButtons was called without a diceRoll object")
             return;
         }
+        if(!is_abovevtt_page() && !window.unlockSidebar){
+            const lockSidebarButton = $(".ct-sidebar__control--unlock, [class*='styles_controls'] [aria-label='Unlocked']");
+            window.unlockSidebar = lockSidebarButton.length > 0;
+            await lockSidebarButton.click();
+        }
         $('[data-floating-ui-portal], .roll-mod-container').addClass('hidden');
         if ($(".dice-toolbar").hasClass("rollable") || $(`[class*='DiceContainer_customDiceRollOpen']`).length>0) {
             // clear any that are already selected so we don't roll too many dice
@@ -883,6 +888,10 @@ class DiceRoller {
         clearTimeout(this.diceRollButtonHide);
         this.diceRollButtonHide = setTimeout(()=>{
             $('[data-floating-ui-portal], .roll-mod-container').removeClass('hidden');
+            if(!is_abovevtt_page() && window.unlockSidebar == true){
+                delete window.unlockSidebar;
+                $(".ct-sidebar__control--unlock, [class*='styles_controls'] [aria-label='Locked']").click();
+            }
         }, 500)
 
     }

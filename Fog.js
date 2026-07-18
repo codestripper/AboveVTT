@@ -156,7 +156,21 @@ class WaypointManagerClass {
 			backgroundColor: "rgba(255, 255, 255, 0.7)"
 		}
 		this.playerId = window.PLAYER_ID;
-		this.throttleDraw = throttle((callback) => {requestAnimationFrame(callback)}, 1000/24);
+		this.throttleDrawQueued = false;
+		this.throttleDraw = throttle((callback) => {
+			if(this.throttleDrawQueued == true)
+				return;
+			this.throttleDrawQueued = true
+			requestAnimationFrame(()=>{
+				try{
+					callback();
+					this.throttleDrawQueued = false;
+				}catch{
+					this.throttleDrawQueued = false;
+				}
+
+			})
+		}, 1000/60);
 	}
 
 	resetDefaultDrawStyle(){
@@ -2035,12 +2049,9 @@ function redraw_elev(openLegened = false) {
 			drawCircle(offscreenContext,x, y, radius, color, isFilled, lineWidth);
 		}
 		if (shape == "polygon") {
-			clearPolygon(offscreenContext, x, scale,true);
-			drawPolygon(offscreenContext, x, color, isFilled, lineWidth, undefined, undefined, scale);
-			// ctx.stroke();
+			drawPolygon(offscreenContext, x, color, isFilled, lineWidth, undefined, undefined, scale, undefined, undefined);
 		}
-		if(shape == "3pointRect"){
-			clear3PointRect(offscreenContext, x, scale,true);	
+		if(shape == "3pointRect"){	
 		 	draw3PointRect(offscreenContext, x, color, isFilled, lineWidth, undefined, undefined, scale);	
 		}
 		if(shape == "paint-bucket"){
@@ -2092,7 +2103,17 @@ function close_elev_legend(){
 
 function check_token_elev(tokenid, elevContext=undefined){
 	if(elevContext == undefined){
-		elevContext = $('#elev_overlay')[0].getContext('2d');
+		elevContext = $('#elev_overlay')[0].getContext('2d', {willReadFrequently: true});
+	}
+	function check_elevation_around_position(x, y){
+		let mapElev;
+		let pixeldata = elevContext.getImageData(left-1, top-1, 2, 2).data;
+		for(let i = 0; i<pixeldata.length; i+=4){
+			const mapElev =`rgba(${pixeldata[i]},${pixeldata[i+1]},${pixeldata[i+2]},1)`;
+			if(window.elevHeights[mapElev] != undefined && window.elevHeights[mapElev] != '')
+				return mapElev;
+		}
+		return false;
 	}
 	let token = window.TOKEN_OBJECTS[tokenid];
 	let left = (parseInt(token.options.left) + (token.options.size / 2)) / window.CURRENT_SCENE_DATA.scale_factor;
@@ -2101,7 +2122,12 @@ function check_token_elev(tokenid, elevContext=undefined){
 	let mapElev =`rgba(${pixeldata[0]},${pixeldata[1]},${pixeldata[2]},1)`;
 
 	if(window.elevHeights != undefined && mapElev != undefined){
-		token.options.mapElev = window.elevHeights[mapElev] != undefined && window.elevHeights[mapElev] != '' ? window.elevHeights[mapElev] : 0;
+		if(window.elevHeights[mapElev] != undefined && window.elevHeights[mapElev] != '' ){
+			token.options.mapElev = window.elevHeights[mapElev];
+		} else{
+			const nearByElevation = check_elevation_around_position(left, top);
+			token.options.mapElev = nearByElevation != false ? window.elevHeights[nearByElevation] : 0;
+		}
 	}
 }
 
@@ -2227,7 +2253,8 @@ function setVisionLightOffscreenCanvas(){
 }
 function open_portal_config(){
 
-	const container = find_or_create_generic_draggable_window('portal_config_window', 'Portal Configuration', false, false, undefined, '500px', 'fit-content', '30px', '317px', false, `input, button`, false, true, ()=>{window.portalsInConfig = undefined;});	
+	const container = find_or_create_generic_draggable_window('portal_config_window', 'Portal Configuration', false, false, undefined, '560px', 'fit-content', '6px', '150px', false, `input, button`, false, true, ()=>{window.portalsInConfig = undefined;});	
+	container.css('max-height', 'calc(100% - 25px)')
 	container.find('.portal-listing').remove();
 	if(window.portalsInConfig == undefined){
 		window.portalsInConfig = {};
@@ -2237,12 +2264,21 @@ function open_portal_config(){
 			return false;
 		
 		const type = Object.keys(doorColors).find(key => Object.keys(doorColors[key]).find(key2 => doorColors[key][key2] === d[2]));
-		return type == 12;
+		return type == 12 || type == 13;
 	});
 	const listing = $(`<div class='portal-listing'></div>`)
 	const table = $(`<table class='portal-table'></table>`)
-	const tableHeaders = $(`<tr><th>Find Portal</th><th>Name</th><th class='show-name-portal-title'>Always Show Name</th><th class='linked-portal-title'>Place Linked Portal</th><th>Copy ID</th><th>More</th></tr>`)
-	table.append(tableHeaders);
+	const colGroup = $(`<colgroup>
+						<col style="width: 40px"> 
+						<col style="width: 200px;">  
+						<col style="width: 50px;"> 
+						<col style="width: 50px;"> 
+						<col style="width: auto;"> 
+						<col style="width: 40px;">
+						<col style="width: 40px;"> 
+					</colgroup>`)
+	const tableHeaders = $(`<tr><th>Find Portal</th><th>Name</th><th>Always Show Name</th><th>Place Linked Portal</th><th>Linked To</th><th>Copy ID</th><th>More</th></tr>`)
+	table.append(colGroup, tableHeaders);
 	listing.append(table);
 	const addPortal = $(`<button id='addPortal'>Add Portal</button>`)
 	listing.append(addPortal);
@@ -2280,7 +2316,7 @@ function open_portal_config(){
 						mouseX+5,
 						mouseY,
 						12,
-						window.CURRENT_SCENE_DATA.scale_factor,
+						window.CURRENT_SCENE_DATA.scale_factor*window.CURRENT_SCENE_DATA.conversion,
 						false, 
 						'', 
 						''
@@ -2312,7 +2348,7 @@ function open_portal_config(){
 				imgsrc: `data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=`,
 				type: 'door',
 				size: 50,
-				scaleCreated: window.CURRENT_SCENE_DATA.scale_factor,
+				scaleCreated: window.CURRENT_SCENE_DATA.scale_factor*window.CURRENT_SCENE_DATA.conversion,
 				auraislight: false,
 				alwaysshowname: window.TOKEN_SETTINGS.alwaysshowname != undefined ? window.TOKEN_SETTINGS.alwaysshowname : false
 			};
@@ -2363,7 +2399,7 @@ function open_portal_config(){
 					imgsrc: `data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=`,
 					type: 'door',
 					size: 50,
-					scaleCreated: window.CURRENT_SCENE_DATA.scale_factor,
+					scaleCreated: window.CURRENT_SCENE_DATA.scale_factor*window.CURRENT_SCENE_DATA.conversion,
 					auraislight: false,
 					alwaysshowname: window.TOKEN_SETTINGS.alwaysshowname != undefined ? window.TOKEN_SETTINGS.alwaysshowname : false
 				};
@@ -2401,21 +2437,39 @@ function open_portal_config(){
 				</button>`)	
 
 			addPortalCell(portalRow, locatePortal);
-			
-			const nameInput = $(`<input type='text' class='portal-name' placeholder='Portal Name' value='${portal.token?.options?.name ?? ''}' />`);
+			const portalOptions = portal.token?.options;
+			const nameInput = $(`<input type='text' class='portal-name' placeholder='Portal Name' value='${portalOptions?.name ?? ''}' />`);
 			addPortalCell(portalRow, nameInput);
 			
-			const checkboxShowName = $(`<input class="portal-show-name" type='checkbox' id="showName_${portalId}" ${portal.token?.options?.alwaysshowname ? 'checked' : ''}></input>`)
+			const checkboxShowName = $(`<input class="portal-show-name" type='checkbox' id="showName_${portalId}" ${portalOptions?.alwaysshowname ? 'checked' : ''}></input>`)
 			addPortalCell(portalRow, checkboxShowName);
-
+	
 			const placeLinkedPortalButton = $(`<button class='place-linked-portal portalButton'><svg class="findSVG" width="24px" height="24px" viewBox="-2 -2 22 24" xmlns="http://www.w3.org/2000/svg" "=""><path fill-rule="evenodd" clip-rule="evenodd" d="M7.2 10.8V18h3.6v-7.2H18V7.2h-7.2V0H7.2v7.2H0v3.6h7.2z"></path></svg></button>`);
 			addPortalCell(portalRow, placeLinkedPortalButton);
-			const copyPortalButton = $('<button class="copy-portal-id portalButton" style="font-size:10px;"><span class="material-symbols-outlined">link</span></button>')
-					
+			
+			let connectedText = '';
+			const teleportCoords = portalOptions?.teleporterCoords;
+			if(teleportCoords?.left != undefined){
+				connectedText = `<span class='connected-portal'>x: ${teleportCoords.left}, y: ${teleportCoords.top}</span>`
+			}else if(teleportCoords?.linkedPortalId != undefined){
+				const linkedPortalId = teleportCoords.linkedPortalId;
+				const linkedPortal = window.portalsInConfig[teleportCoords.linkedPortalId]?.token ?? window.all_token_objects[teleportCoords.linkedPortalId];
+				const name = linkedPortal?.options?.name;
+				const sceneId = teleportCoords.sceneId;
+				const scene = window.ScenesHandler.scenes.find(d => d.id == sceneId);
+				connectedText = `${name != undefined ? `<span class='connected-portal'>Portal: ${name}</span><br>` : ``}<span class='connected-portal'>Scene: ${scene.title}</span>`
+			}
+			
+
+			const currentLinkedPortalButton = $(`<div class='connected-portal-container'>${connectedText}</div>`);
+			addPortalCell(portalRow, currentLinkedPortalButton);
+
+			const copyPortalButton = $('<button class="copy-portal-id portalButton" style="font-size:10px;"><span class="material-symbols-outlined">link</span></button>')		
 			addPortalCell(portalRow, copyPortalButton);
+			
 			const portalSettingsButton = $(`<button class="portal-settings portalButton" style="font-size:10px;"><span class="material-symbols-outlined">more_vert</span></button>`);
-				
 			addPortalCell(portalRow, portalSettingsButton);
+
 			table.append(portalRow);
 		}
 	}
@@ -2492,7 +2546,7 @@ function open_portal_config(){
 						mouseX+5,
 						mouseY,
 						12,
-						window.CURRENT_SCENE_DATA.scale_factor,
+						window.CURRENT_SCENE_DATA.scale_factor*window.CURRENT_SCENE_DATA.conversion,
 						wall[9],
 						(wall[10] != undefined ? wall[10] : ""),
 						(wall[11] != undefined ? wall[11] : "")
@@ -2581,6 +2635,7 @@ function open_portal_config(){
 			window.TOKEN_OBJECTS[portalId].options.name = newName;
 			window.TOKEN_OBJECTS[portalId].place(0);
 		}
+		open_portal_config();
 	}
 	const changeShowName = function(el){
 
@@ -2612,9 +2667,9 @@ function open_portal_config(){
 
 		//have menu open to the right of click instead of left as it would for tokens
 		if(e.touches != undefined){
-			e.touches[0].clientX += 230;
+			e.touches[0].clientX += 250;
 		}else{
-			e.clientX += 230;
+			e.clientX += 250;
 		}
 
 		if(sceneId != window.CURRENT_SCENE_DATA.id){
@@ -2627,7 +2682,7 @@ function open_portal_config(){
 
 	
 
-	listing.off('change.portalInputs input.portalInputs').on('change.portalInputs input.portalInputs', '.portal-name, .portal-show-name', function(){
+	listing.off('change.portalInputs focusout.portalInputs').on('change.portalInputs focusout.portalInputs', '.portal-name, .portal-show-name', function(){
 		const classList = this.classList;
 		if(classList.contains('portal-name')){
 			changeName(this);
@@ -2659,7 +2714,7 @@ function open_portal_config(){
 		
 	})
 	listing.off('pointerdown.closeTokenMenu').on('pointerdown.closeTokenMenu', function(event){
-		close_token_context_menu();
+		setTimeout(close_token_context_menu,  50);
 	})
 	
 	listing.off('mouseenter.locatePortal, focusin.locatePortal').on('mouseenter.locatePortal, focusin.locatePortal', '.portal-entry', function(){
@@ -2674,6 +2729,21 @@ function open_portal_config(){
 			return;
 		$(`.door-button[data-id="${id}"]`).removeClass('tokenselected');
 	})
+
+	listing.off('mouseover.overflowName').on('mouseover.overflowName', '.connected-portal', function(e){
+        const target = $(e.currentTarget)
+        
+        const text = $(e.currentTarget).text();
+        const text_calc = $('body>div.track-name:first');
+        text_calc.html(`${text}.....`);
+        const nameWidth = text_calc.width();
+        const overflowVal = target.closest('td').width() + 10;
+
+        target.css({
+            "--name-width-overflow": (overflowVal - nameWidth < 0) ? overflowVal - 10 - nameWidth+'px' : 0,
+            "--overflow-speed": (overflowVal - nameWidth < 0) ? parseInt(nameWidth)*10+'ms' : 800+'ms'
+        });   
+    })
 
 
 	
@@ -2841,13 +2911,13 @@ function redraw_light_walls(options = {clearCanvas: true, editingWallPoints: fal
 							let tokenObject = window.TOKEN_OBJECTS[`${x}${y}${width}${height}${window.CURRENT_SCENE_DATA.id}`.replaceAll('.','')]
 
 								
-							if(tokenObject?.options?.teleporterCoords?.linkedPortalId != undefined){
+							if(tokenObject?.options?.teleporterCoords?.linkedPortalId != undefined && tokenObject.options.teleporterCoords.sceneId != window.CURRENT_SCENE_DATA.id){
 								copy_selected_tokens(tokenObject.options.teleporterCoords.linkedPortalId);
 								forSelTokens((token,id) => {
 									token.selected = true;
 									token.options.deleteableByPlayers = true;
 								});
-								delete_selected_tokens();
+								delete_selected_tokens(false);
 								
 								window.MB.sendMessage('custom/myVTT/highlight', {
 									id: tokenObject.options.id
@@ -2883,13 +2953,21 @@ function redraw_light_walls(options = {clearCanvas: true, editingWallPoints: fal
 								}
 							}
 							else if(tokenObject?.options?.teleporterCoords != undefined){
-
+								let coords = tokenObject.options.teleporterCoords;
+								if(tokenObject.options.teleporterCoords.sceneId == window.CURRENT_SCENE_DATA.id){
+									const teleporterTokenId = tokenObject.options.teleporterCoords.linkedPortalId
+									const targetPortal = window.TOKEN_OBJECTS[teleporterTokenId];
+									const top = (parseInt(targetPortal.options.top) + 25);
+									const left = (parseInt(targetPortal.options.left) + 25);
+									const scale = targetPortal.options.scaleCreated ?? 1;
+									coords = {left, top, scale};
+								}
 								forSelTokens((curr) => {
 									if(!window.DM && (curr.options.restrictPlayerMove || curr.options.locked) && !curr.isCurrentPlayer() && curr.options.groupId == undefined) return
 										
-									const scaleCoversion = window.CURRENT_SCENE_DATA.scale_factor != undefined ? window.CURRENT_SCENE_DATA.scale_factor / tokenObject.options.teleporterCoords.scale : 1 / tokenObject.options.teleporterCoords.scale;
-									curr.options.left = `${tokenObject.options.teleporterCoords.left*scaleCoversion - curr.options.size/2}px`;
-									curr.options.top = `${tokenObject.options.teleporterCoords.top*scaleCoversion - curr.options.size/2}px`
+									const scaleCoversion = window.CURRENT_SCENE_DATA.scale_factor != undefined ? window.CURRENT_SCENE_DATA.scale_factor / coords.scale : 1 / coords.scale;
+									curr.options.left = `${coords.left*scaleCoversion - curr.options.size/2}px`;
+									curr.options.top = `${coords.top*scaleCoversion - curr.options.size/2}px`
 								
 
 									curr.place(0);
@@ -3285,8 +3363,7 @@ function door_note_icon(id){
 				'mouseover': function(e){
 					hoverNoteTimer = setTimeout(function () {
 		            	build_and_display_sidebar_flyout(e.clientY, async function (flyout) {
-				            flyout.addClass("prevent-sidebar-modal-close"); // clicking inside the tooltip should not close the sidebar modal that opened it
-				            let noteHover = `<div>
+							let noteHover = `<div>
 								<div class="tooltip-header">
 						       	 	<div class="tooltip-header-icon">
 						            
@@ -3306,69 +3383,7 @@ function door_note_icon(id){
 							        </div>
 							    </div>
 							</div>`
-				            const tooltipHtml = $(noteHover);
-							await window.JOURNAL.translateHtmlAndBlocks(tooltipHtml, id)
-							add_journal_roll_buttons(tooltipHtml);
-							window.JOURNAL.add_journal_tooltip_targets(tooltipHtml);
-							add_stat_block_hover(tooltipHtml);
-							add_aoe_statblock_click(tooltipHtml);
-							flyout.append(tooltipHtml);
-							let sendToGamelogButton = $(`<a class="ddbeb-button" href="#">Send To Gamelog</a>`);
-							sendToGamelogButton.css({ "float": "right" });
-							sendToGamelogButton.on("click", function (ce) {
-								ce.stopPropagation();
-								ce.preventDefault();
-								const tooltipWithoutButton = $(noteHover);
-								tooltipWithoutButton.css({
-									"width": "100%",
-									"max-width": "100%",
-									"min-width": "100%"
-								});
-								send_html_to_gamelog(noteHover);
-							});
-							let flyoutLeft = e.clientX + 20
-							if (flyoutLeft + 400 > window.innerWidth) {
-								flyoutLeft = window.innerWidth - 420
-							}
-							flyout.css({
-								left: flyoutLeft,
-								width: '400px'
-							})
-							let flyoutTop = e.clientY;
-							let flyoutHeight = flyout.height() + 25;
-							let bottom = (e.clientY + flyoutHeight);
-
-							if (bottom > window.innerHeight) {
-								flyoutTop = flyoutTop - (bottom - window.innerHeight) - 25;
-							}
-							flyout.css('top', flyoutTop);
-
-							const buttonFooter = $("<div></div>");
-							buttonFooter.css({
-								height: "40px",
-								width: "100%",
-								position: "relative",
-								background: "#fff"
-							});
-							flyout.append(buttonFooter);
-							buttonFooter.append(sendToGamelogButton);
-							flyout.find("a").attr("target", "_blank");
-							flyout.off('click').on('click', '.tooltip-hover[href*="https://www.dndbeyond.com/sources/dnd/"], .int_source_link ', function (event) {
-								event.preventDefault();
-								render_source_chapter_in_iframe(event.target.href);
-							});
-
-
-							flyout.hover(function (hoverEvent) {
-								if (hoverEvent.type === "mouseenter") {
-									clearTimeout(removeToolTipTimer);
-									removeToolTipTimer = undefined;
-								} else {
-									remove_tooltip(500);
-								}
-							});
-							flyout.css("background-color", "#fff");
-							
+							setup_tooltip_flyout(flyout,  noteHover, ['note-flyout'], e, {id});						
 				        });
 		        	}, 500);		
 				
@@ -5862,42 +5877,28 @@ function drawPolygon (
 	replacefog = false,
 	islight = false
 ) {
-	if(fill && islight && replacefog){
-		
-		ctx.save();
-		ctx.fillStyle = 'rgba(255,255,255,1)';
-		ctx.beginPath();
-		let adjustScale = (scale/window.CURRENT_SCENE_DATA.scale_factor)	
-		ctx.moveTo(points[0].x/adjustScale/window.CURRENT_SCENE_DATA.scale_factor, points[0].y/adjustScale/window.CURRENT_SCENE_DATA.scale_factor);
-		ctx.lineWidth = lineWidth;
-		
-		for(let vertice of points){
-			ctx.lineTo(vertice.x/adjustScale/window.CURRENT_SCENE_DATA.scale_factor, vertice.y/adjustScale/window.CURRENT_SCENE_DATA.scale_factor);
-		}
+	ctx.save();
+	ctx.imageSmoothingEnabled = false;
 
-		if (mouseX !== null && mouseY !== null) {
-			ctx.lineTo(mouseX/adjustScale/window.CURRENT_SCENE_DATA.scale_factor, mouseY/adjustScale/window.CURRENT_SCENE_DATA.scale_factor);
-		}
-		ctx.closePath();
+	ctx.beginPath();
+	let adjustScale = (scale/window.CURRENT_SCENE_DATA.scale_factor)	
+	
+	ctx.moveTo(points[0].x/adjustScale/window.CURRENT_SCENE_DATA.scale_factor, points[0].y/adjustScale/window.CURRENT_SCENE_DATA.scale_factor);
+	ctx.lineWidth = lineWidth;
+		
+	for(let vertice of points) {
+		ctx.lineTo(vertice.x/adjustScale/window.CURRENT_SCENE_DATA.scale_factor, vertice.y/adjustScale/window.CURRENT_SCENE_DATA.scale_factor);
+	}
+
+	if (mouseX !== null && mouseY !== null) {
+		ctx.lineTo(mouseX/adjustScale/window.CURRENT_SCENE_DATA.scale_factor, mouseY/adjustScale/window.CURRENT_SCENE_DATA.scale_factor);
+	}
+	ctx.closePath();
+	if(fill && islight && replacefog){
+		ctx.fillStyle = 'rgba(255,255,255,1)';
 		ctx.fill();
-		ctx.restore();
 	}	
 	else{
-		ctx.save();
-		ctx.beginPath();
-		let adjustScale = (scale/window.CURRENT_SCENE_DATA.scale_factor)	
-		
-		ctx.moveTo(points[0].x/adjustScale/window.CURRENT_SCENE_DATA.scale_factor, points[0].y/adjustScale/window.CURRENT_SCENE_DATA.scale_factor);
-		ctx.lineWidth = lineWidth;
-			
-		for(let vertice of points) {
-			ctx.lineTo(vertice.x/adjustScale/window.CURRENT_SCENE_DATA.scale_factor, vertice.y/adjustScale/window.CURRENT_SCENE_DATA.scale_factor);
-		}
-
-		if (mouseX !== null && mouseY !== null) {
-			ctx.lineTo(mouseX/adjustScale/window.CURRENT_SCENE_DATA.scale_factor, mouseY/adjustScale/window.CURRENT_SCENE_DATA.scale_factor);
-		}
-		ctx.closePath();
 		// draw a line between first 2 points
 		if (points.length < 2){
 			ctx.strokeStyle = style;
@@ -5923,9 +5924,9 @@ function drawPolygon (
 			ctx.strokeStyle = style;
 			ctx.stroke();
 		}
-		ctx.restore();
 	}
 
+	ctx.restore();
 }
 
 //just returns points if ctx==null
@@ -8382,9 +8383,8 @@ function lineLine(x1, y1, x2, y2, x3, y3, x4, y4) {
 
 //Checks if a pixel is in line of current line of sight
 function detectInLos(x, y) {
-	let canvas = window.moveOffscreenCanvasMask;
-	let ctx = canvas.getContext("2d");
-	const pixeldata = ctx.getImageData(x/window.CURRENT_SCENE_DATA.scale_factor, y/window.CURRENT_SCENE_DATA.scale_factor, 1, 1).data;
+	const ctx = window.moveOffscreenCanvasMaskContext
+	const pixeldata = ctx.getImageData(Math.floor(x/window.CURRENT_SCENE_DATA.scale_factor)-1, Math.floor(y/window.CURRENT_SCENE_DATA.scale_factor)-1, 2, 2).data;
 
 	for(let i=0; i<pixeldata.length; i+=4){
 		if(pixeldata[i] <= 5)
@@ -8499,7 +8499,7 @@ function redraw_light(darknessMoved = false, limitActiveRays = 0) {
 	const adjustScale = (window.CURRENT_SCENE_DATA.scale_factor != undefined) ? window.CURRENT_SCENE_DATA.scale_factor : 1;
 
 	if (window.elevContext == undefined) {
-		window.elevContext = document.getElementById('elev_overlay').getContext('2d');
+		window.elevContext = document.getElementById('elev_overlay').getContext('2d', {willReadFrequently: true});
 	}
 	
 	let darknessBoundarys = getDarknessBoundarys();
@@ -8515,8 +8515,12 @@ function redraw_light(darknessMoved = false, limitActiveRays = 0) {
 	}
 	const wallsCache = buildWallCache(allWalls);
 	for (let i = 0; i < light_auras.length; i++) {
-
+		
 		let auraId = light_auras[i];
+		if(!window.TOKEN_OBJECTS[auraId]){
+			console.warn('Token not found after finding a light aura for it. Most likely during scene change')
+			return;
+		}
 		const auraClipContainers = document.querySelectorAll(`.aura-element-container-clip[id='${auraId}']`);
 
 		let found = selectedIds.includes(auraId);
@@ -8542,18 +8546,21 @@ function redraw_light(darknessMoved = false, limitActiveRays = 0) {
 			window.lineOfSightPolygons[auraId].scaleCreated === window.TOKEN_OBJECTS[auraId].options.scaleCreated &&
 			window.lineOfSightPolygons[auraId].elev === window.TOKEN_OBJECTS[auraId].options.elev &&
 			darknessMoved !== true) {
+
 			lightPolygon = window.lineOfSightPolygons[auraId].polygon;  // if the token hasn't moved and walls haven't changed don't look for a new poly.
 			movePolygon = window.lineOfSightPolygons[auraId].move;  // if the token hasn't moved and walls haven't changed don't look for a new poly.
 			noDarknessPolygon = window.lineOfSightPolygons[auraId].noDarkness;
-			if(!window.lightAuraClipPolygon[auraId] ||
-				window.lightAuraClipPolygon[auraId].light1?.range !== window.TOKEN_OBJECTS[auraId].options.light1?.feet ||
-				window.lightAuraClipPolygon[auraId].light2?.range !== window.TOKEN_OBJECTS[auraId].options.light2?.feet ||
-				window.lightAuraClipPolygon[auraId].devilsight?.range !== window.TOKEN_OBJECTS[auraId].options.devilsight?.feet ||
-				window.lightAuraClipPolygon[auraId].truesight?.range !== window.TOKEN_OBJECTS[auraId].options.truesight?.feet ||
-				window.lightAuraClipPolygon[auraId].vision?.range !== window.TOKEN_OBJECTS[auraId].options.vision?.feet
+
+			if(window.lightAuraClipPolygon?.[auraId] == undefined 
+				|| window.lightAuraClipPolygon[auraId].light1.feet !== parseFloat(window.TOKEN_OBJECTS[auraId].options.light1?.feet) 
+				|| window.lightAuraClipPolygon[auraId].light2.feet !== parseFloat(window.TOKEN_OBJECTS[auraId].options.light2?.feet)
+				|| window.lightAuraClipPolygon[auraId].vision.feet !== parseFloat(window.TOKEN_OBJECTS[auraId].options.vision?.feet)
+				|| window.lightAuraClipPolygon[auraId].devilsight.feet !== parseFloat(window.TOKEN_OBJECTS[auraId].options.devilsight?.feet)
+				|| window.lightAuraClipPolygon[auraId].truesight.feet !== parseFloat(window.TOKEN_OBJECTS[auraId].options.truesight?.feet)
 			){
 				clipped_light(auraId, window.lightPolygon, playerTokenId, canvasWidth, canvasHeight, darknessBoundarys, selectedIds.length);
 			}
+
 		}
 		else {
 
@@ -8833,7 +8840,8 @@ function getTokenVision(tokenId, darknessMoved){
 		numberofwalls: walls.length+darknessBoundarys.length,
 		clippath: path,
 		visionType: window.TOKEN_OBJECTS[tokenId].options.sight,
-		scaleCreated: window.TOKEN_OBJECTS[tokenId].options.scaleCreated
+		scaleCreated: window.TOKEN_OBJECTS[tokenId].options.scaleCreated,
+		elev: window.TOKEN_OBJECTS[tokenId].options.elev
 	}
 	if(window.lineOfSightPolygons[tokenId] !== undefined &&(window.TOKEN_OBJECTS[tokenId].options.devilsight?.feet > 0 || window.TOKEN_OBJECTS[tokenId].options.truesight?.feet > 0)){
 		let path = "";
@@ -9023,8 +9031,6 @@ function draw_darkness_aoe_to_canvas(ctx){
 	draw_aoe_to_canvas(darknessAoes, ctx, true);
 }
 function clipped_light(auraId, maskPolygon, playerTokenId, canvasWidth = getSceneMapSize().sceneWidth, canvasHeight = getSceneMapSize().sceneHeight, darknessBoundarys = getDarknessBoundarys(), numberOfSharedVisionTokens = 0, tokenWalls = getVisionBlockingTokenWalls()){
-
-	
 	let visionColor = `rgba(0,0,0,0)`;
 	let visionRange = 0;
 	let devilsightColor = `rgba(0,0,0,0)`;
@@ -9044,37 +9050,37 @@ function clipped_light(auraId, maskPolygon, playerTokenId, canvasWidth = getScen
 	if(window.TOKEN_OBJECTS[auraId] !== undefined){
 		if(window.TOKEN_OBJECTS[auraId].options.vision !== undefined){
 			if(window.TOKEN_OBJECTS[auraId].options.vision.color !== undefined)
-				visionColor =  window.TOKEN_OBJECTS[auraId].options.vision.color;
+				visionColor = window.TOKEN_OBJECTS[auraId].options.vision.color;
 
 			if(window.TOKEN_OBJECTS[auraId].options.vision.feet !== undefined)
-				visionRange = window.TOKEN_OBJECTS[auraId].options.vision.feet;
+				visionRange = parseFloat(window.TOKEN_OBJECTS[auraId].options.vision.feet);
 		}
 		if(window.TOKEN_OBJECTS[auraId].options.devilsight !== undefined){
 			if(window.TOKEN_OBJECTS[auraId].options.devilsight.color !== undefined)
-				devilsightColor =  window.TOKEN_OBJECTS[auraId].options.devilsight.color;
+				devilsightColor = window.TOKEN_OBJECTS[auraId].options.devilsight.color;
 
 			if(window.TOKEN_OBJECTS[auraId].options.devilsight.feet !== undefined)
-				devilsightRange = window.TOKEN_OBJECTS[auraId].options.devilsight.feet;
+				devilsightRange = parseFloat(window.TOKEN_OBJECTS[auraId].options.devilsight.feet);
 		}
 		if(window.TOKEN_OBJECTS[auraId].options.truesight !== undefined){
 			if(window.TOKEN_OBJECTS[auraId].options.truesight.color !== undefined)
-				truesightColor =  window.TOKEN_OBJECTS[auraId].options.truesight.color;
+				truesightColor = window.TOKEN_OBJECTS[auraId].options.truesight.color;
 
 			if(window.TOKEN_OBJECTS[auraId].options.truesight.feet !== undefined)
-				truesightRange = window.TOKEN_OBJECTS[auraId].options.truesight.feet;
+				truesightRange = parseFloat(window.TOKEN_OBJECTS[auraId].options.truesight.feet);
 		}
 		if(window.TOKEN_OBJECTS[auraId].options.light1 !== undefined){
 			if(window.TOKEN_OBJECTS[auraId].options.light1.color !== undefined)
-				light1Color =  window.TOKEN_OBJECTS[auraId].options.light1.color; 
+				light1Color = window.TOKEN_OBJECTS[auraId].options.light1.color; 
 			if(window.TOKEN_OBJECTS[auraId].options.light1.feet !== undefined)
-				light1Range =  window.TOKEN_OBJECTS[auraId].options.light1.feet; 
+				light1Range = parseFloat(window.TOKEN_OBJECTS[auraId].options.light1.feet); 
 		}
 		if(window.TOKEN_OBJECTS[auraId].options.light2 !== undefined){	
 			if(window.TOKEN_OBJECTS[auraId].options.light2.color !== undefined)
-				light2Color =  window.TOKEN_OBJECTS[auraId].options.light2.color; 
+				light2Color = window.TOKEN_OBJECTS[auraId].options.light2.color; 
 
 			if( window.TOKEN_OBJECTS[auraId].options.light2.feet !== undefined)
-				light2Range =  window.TOKEN_OBJECTS[auraId].options.light2.feet 
+				light2Range = parseFloat(window.TOKEN_OBJECTS[auraId].options.light2.feet);
 		}
 	}
 
@@ -9094,10 +9100,10 @@ function clipped_light(auraId, maskPolygon, playerTokenId, canvasWidth = getScen
 		blackTruesight = 0;
 
 
-	const lightRadius = ((parseFloat(light1Range) * blackLight1) + (parseFloat(light2Range)*blackLight2))*window.CURRENT_SCENE_DATA.hpps/window.CURRENT_SCENE_DATA.fpsq 
-	let darkvisionRadius = parseFloat(visionRange)*window.CURRENT_SCENE_DATA.hpps/window.CURRENT_SCENE_DATA.fpsq*blackVision;
-	let devilsightRadius = parseFloat(devilsightRange)*window.CURRENT_SCENE_DATA.hpps/window.CURRENT_SCENE_DATA.fpsq*blackDevilsight;
-	let truesightRadius = parseFloat(truesightRange)*window.CURRENT_SCENE_DATA.hpps/window.CURRENT_SCENE_DATA.fpsq*blackTruesight;
+	const lightRadius = ((light1Range * blackLight1) + (light2Range*blackLight2)) *window.CURRENT_SCENE_DATA.hpps/window.CURRENT_SCENE_DATA.fpsq 
+	let darkvisionRadius = visionRange*window.CURRENT_SCENE_DATA.hpps/window.CURRENT_SCENE_DATA.fpsq*blackVision;
+	let devilsightRadius = devilsightRange*window.CURRENT_SCENE_DATA.hpps/window.CURRENT_SCENE_DATA.fpsq*blackDevilsight;
+	let truesightRadius = truesightRange*window.CURRENT_SCENE_DATA.hpps/window.CURRENT_SCENE_DATA.fpsq*blackTruesight;
 
 
 	const selectedTokenCheck = numberOfSharedVisionTokens == 0 || (window.SelectedTokenVision !== true || window.CURRENTLY_SELECTED_TOKENS.includes(auraId) || window.CURRENTLY_SELECTED_TOKENS.length===0)
@@ -9139,23 +9145,28 @@ function clipped_light(auraId, maskPolygon, playerTokenId, canvasWidth = getScen
 		truesight: truesightRadius,
 		light1: {
 			range: light1Range > 0 ? light1Range * window.CURRENT_SCENE_DATA.hpps / window.CURRENT_SCENE_DATA.fpsq + (window.TOKEN_OBJECTS[auraId].options.size / 2) : 0,
-			color: light1Color
+			color: light1Color,
+			feet: light1Range
 		},
 		light2: {
-			range: light2Range > 0 ? (parseInt(light1Range) + parseInt(light2Range)) * window.CURRENT_SCENE_DATA.hpps / window.CURRENT_SCENE_DATA.fpsq + (window.TOKEN_OBJECTS[auraId].options.size / 2) : 0,
-			color: light2Color
+			range: light2Range > 0 ? (light1Range + light2Range) * window.CURRENT_SCENE_DATA.hpps / window.CURRENT_SCENE_DATA.fpsq + (window.TOKEN_OBJECTS[auraId].options.size / 2) : 0,
+			color: light2Color,
+			feet: light2Range
 		},
 		vision: {
 			range: darkvisionRadius,
-			color: visionColor
+			color: visionColor,
+			feet: visionRange
 		},
 		devilsightVision: {
 			range: devilsightRadius,
-			color: devilsightColor
+			color: devilsightColor,
+			feet: devilsightRange
 		},
 		truesightVision: {
 			range: darkvisionRadius,
-			color: truesightColor
+			color: truesightColor,
+			feet: truesightRange
 		},
 		middle: {
 			x: horizontalTokenMiddle,

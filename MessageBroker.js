@@ -992,7 +992,7 @@ class MessageBroker {
 				let tokenid=msg.data.id;
 				if(tokenid in window.TOKEN_OBJECTS){
 					window.TOKEN_OBJECTS[tokenid].options.deleteableByPlayers = true;
-					window.TOKEN_OBJECTS[tokenid].delete(false);
+					window.TOKEN_OBJECTS[tokenid].delete(false, msg.data.removeFromCombatTracker);
 				}
 			} else if(msg.eventType == "custom/myVTT/createtoken"){
 				if(window.DM){
@@ -2342,7 +2342,7 @@ class MessageBroker {
 		else if(data.left){
 
 			let t = new Token(data);
-			if(isNaN(parseFloat(t.options.left)) || isNaN(parseInt(t.options.top))){ // prevent errors with NaN positioned tokens - delete them as catch all. 
+			if(isNaN(parseInt(t.options.left)) || isNaN(parseInt(t.options.top))){ // prevent errors with NaN positioned tokens - delete them as catch all. 
 				t.options.deleteableByPlayers = true;
 				t.delete();
 				return;
@@ -2358,12 +2358,11 @@ class MessageBroker {
 				}	
 				debounce_pc_token_update();
 			}
-			t.place();
-
-
-			let playerTokenId = $(`.token[data-id*='${window.PLAYER_ID}']`).attr("data-id");
-			let playerTokenAuraIsLight = (playerTokenId == undefined) ? true : window.TOKEN_OBJECTS[playerTokenId].options.auraislight;
-			check_single_token_visibility(data.id);
+			t.place(0, undefined, ()=>{
+				if(!msg.loading)
+					check_single_token_visibility(data.id);
+			});
+			
 	
 		}
 	}

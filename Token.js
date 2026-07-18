@@ -21,17 +21,48 @@ const availableToAoe = [
 //reused transform definition
 const imageTransform = 'scale(var(--token-scale)) rotate(calc(var(--token-rotation) + var(--token-heading))) scaleX(var(--token-flip-x, 1))';
 function tokenFlipX(token) { return ((token.options.tokenFlip || 0) & 1) ? -1 : 1; }
-
+let lightFrameQueued = false;
+let pendingLightDarknessMoved = false;
 const throttleLight = throttle((darknessMoved = false) => {
-	if(window.LOADING){
+	pendingLightDarknessMoved = darknessMoved;
+
+	if (lightFrameQueued || window.LOADING) {
 		return;
 	}
-	if (!window.walls || window.walls?.length < 5) {
-		redraw_light_walls();
-	} 
-	requestAnimationFrame(() =>{redraw_light(darknessMoved, 1000)})
+
+	lightFrameQueued = true;
+
+	requestAnimationFrame(() => {
+
+		try{
+			if(!window.walls || window.walls?.length < 5) 
+				redraw_light_walls();		
+
+			redraw_light(pendingLightDarknessMoved, 1000);
+			lightFrameQueued = false;
+		}
+		catch{
+			lightFrameQueued = false;
+		}
+	});
 }, 1000/30);
-const throttleTokenCheck = throttle(do_check_token_visibility, 1000/4);
+
+let tokenCheckQueued = false;
+const throttleTokenCheck = throttle(()=>{
+	if(tokenCheckQueued)
+		return;
+	tokenCheckQueued = true;
+	requestAnimationFrame(() =>{
+		try{
+			do_check_token_visibility();
+			tokenCheckQueued = false;
+		}
+		catch{
+			tokenCheckQueued = false;
+		}
+	})
+}, 1000/8);
+
 const debounceStoreExplored = mydebounce((exploredCanvas, sceneId) => {		
 	let dataURI = exploredCanvas.toDataURL('image/jpg')
 
@@ -48,13 +79,14 @@ const debounceStoreExplored = mydebounce((exploredCanvas, sceneId) => {
 var debounceLightChecks = mydebounce((darknessMoved = false) => {		
 		if(window.DRAGGING)
 			return;
-		if (!window.walls || window.walls?.length < 5){
-			redraw_light_walls();	
-		}
 		
 		requestAnimationFrame(()=>{
+			if (!window.walls || window.walls?.length < 5)
+				redraw_light_walls();	
+			
 			if(darknessMoved === true)
 				redraw_drawn_light(darknessMoved);
+
 			redraw_light(darknessMoved)
 		});
 		
@@ -69,11 +101,11 @@ var debounceAudioChecks = mydebounce(() => {
 var longDebounceLightChecks = mydebounce((darknessMoved = false) => {		
 		if(window.DRAGGING)
 			return;
-		if (!window.walls || window.walls?.length < 5){
-			redraw_light_walls();	
-		}
-		//let promise = [new Promise (_ => setTimeout(redraw_light(), 1000))];
+
 		requestAnimationFrame(()=>{
+			if (!window.walls || window.walls?.length < 5)
+				redraw_light_walls();	
+		
 			if(darknessMoved === true)
 				redraw_drawn_light(darknessMoved);
 			redraw_light(darknessMoved)
@@ -128,9 +160,7 @@ class Token {
 	get baseHp() {
 		if (!isNaN(this.options.hitPointInfo?.current)) {
 			return parseInt(this.options.hitPointInfo.current);
-		} else if (!isNaN((this.options.hp))) {
-			return parseInt(this.options.hp);
-		}
+		} 
 		return 0;
 	}
 	set baseHp(newValue) {
@@ -153,7 +183,6 @@ class Token {
 			};
 			window.MB.inject_chat(msgdata);
 		}
-		this.options.hp = newValue; // backwards compatibility
 	}
 
 
@@ -161,8 +190,6 @@ class Token {
 	get tempHp() {
 		if (!isNaN(this.options.hitPointInfo?.temp)) {
 			return parseInt(this.options.hitPointInfo.temp);
-		} else if (!isNaN(this.options.temp_hp)) {
-			return parseInt(this.options.temp_hp);
 		}
 		return 0;
 	}
@@ -176,7 +203,7 @@ class Token {
 				temp: newValue
 			};
 		}
-		this.options.temp_hp = newValue; // backwards compatibility
+
 	}
 
 	/** @return {number} the percentage of this token's temp HP divided by it's max hp */
@@ -188,8 +215,6 @@ class Token {
 	get maxHp() {
 		if (!isNaN(this.options.hitPointInfo?.maximum)) {
 			return parseInt(this.options.hitPointInfo.maximum);
-		} else if (!isNaN((this.options.max_hp))) {
-			return parseInt(this.options.max_hp);
 		}
 		return 0;
 	}
@@ -203,21 +228,17 @@ class Token {
 				temp: this.tempHp
 			};
 		}
-		this.options.max_hp = newValue; // backwards compatibility
 	}
 
 	/** @return {number} the value of this token's AC */
 	get ac() {
 		if (!isNaN(this.options.armorClass)) {
 			return parseInt(this.options.armorClass);
-		} else if (!isNaN(this.options.ac)) {
-			return parseInt(this.options.ac);
-		}
+		} 
 		return 0;
 	}
 	set ac(newValue) {
 		this.options.armorClass = newValue;
-		this.options.ac = newValue; // backwards compatibility
 	}
 
 	/** @return {string[]} the names of the conditions currently active on the token */
@@ -533,7 +554,7 @@ class Token {
 		this.place_sync_persist()
 		debounceCombatPersist();
 	}
-	delete(persist=true) {
+	delete(persist=true, removeFromCombatTracker=true) {
 		if (!window.DM && this.options.deleteableByPlayers != true) {
 			// only allow the DM to delete tokens unless the token specifies deleteableByPlayers == true which is used by AoE tokens and maybe others
 			return;
@@ -553,13 +574,16 @@ class Token {
 		}
 	
 		delete window.ON_SCREEN_TOKENS[id];
-		if(!is_player_id(this.options.id)){
-			delete window.all_token_objects[id];
-			if (id in window.JOURNAL.notes) {
-				delete window.JOURNAL.notes[id];
-				window.JOURNAL.persist();
+		if(removeFromCombatTracker == true){
+			if(!is_player_id(this.options.id)){
+				delete window.all_token_objects[id];
+				if (id in window.JOURNAL.notes) {
+					delete window.JOURNAL.notes[id];
+					window.JOURNAL.persist();
+				}
 			}
 		}
+
 
 
 		
@@ -571,42 +595,45 @@ class Token {
 		if(this.options?.audioChannel?.audioId != undefined){
 			window.MIXER.deleteChannel(this.options.audioChannel.audioId)
 		}
-		if(this.options.combatGroupToken && window.DM){
-			for(let i in window.TOKEN_OBJECTS){
-				if(i == this.options.combatGroupToken)
-					continue;
+		if(removeFromCombatTracker == true){
+			if(this.options.combatGroupToken && window.DM){
+				for(let i in window.TOKEN_OBJECTS){
+					if(i == this.options.combatGroupToken)
+						continue;
 
-				
-				if(window.TOKEN_OBJECTS[i].options.combatGroup == this.options.combatGroupToken){
-					delete window.TOKEN_OBJECTS[i].options.combatGroup;
-					delete window.TOKEN_OBJECTS[i].options.ct_show;
-					if(window.all_token_objects[i] != undefined){
-						delete window.all_token_objects[i].options.combatGroup;
-						delete window.all_token_objects[i].options.ct_show;
+					
+					if(window.TOKEN_OBJECTS[i].options.combatGroup == this.options.combatGroupToken){
+						delete window.TOKEN_OBJECTS[i].options.combatGroup;
+						delete window.TOKEN_OBJECTS[i].options.ct_show;
+						if(window.all_token_objects[i] != undefined){
+							delete window.all_token_objects[i].options.combatGroup;
+							delete window.all_token_objects[i].options.ct_show;
+						}
+						ct_remove_token(window.TOKEN_OBJECTS[i], false);
+						window.TOKEN_OBJECTS[i].update_and_sync();
 					}
-					ct_remove_token(window.TOKEN_OBJECTS[i], false);
-					window.TOKEN_OBJECTS[i].update_and_sync();
 				}
 			}
-		}
-		if(this.options.combatGroup && !this.options.combatGroupToken){
-			let count = 0;
-			for(let i in window.TOKEN_OBJECTS){
-				if(window.TOKEN_OBJECTS[i].options.combatGroup == this.options.combatGroup){
-					count++;
+			if(this.options.combatGroup && !this.options.combatGroupToken){
+				let count = 0;
+				for(let i in window.TOKEN_OBJECTS){
+					if(window.TOKEN_OBJECTS[i].options.combatGroup == this.options.combatGroup){
+						count++;
+					}
 				}
-			}
-			if(count == 1){
-				window.TOKEN_OBJECTS[this.options.combatGroup].delete();
+				if(count == 1){
+					window.TOKEN_OBJECTS[this.options.combatGroup].delete();
+				}
 			}
 		}
 		if (this.options.darkness || this.options.tokenWall){
 			redraw_drawn_light();
 		}
-
-		ct_remove_token(this, false);
+		if(removeFromCombatTracker == true){
+			ct_remove_token(this, false);
+		}
 		if (persist == true) {	
-			window.MB.sendMessage("custom/myVTT/delete_token",{id:id});
+			window.MB.sendMessage("custom/myVTT/delete_token",{id, removeFromCombatTracker});
 		}
 		debounceLightChecks();
 		update_pc_token_rows();
@@ -615,7 +642,7 @@ class Token {
 		return (Math.round(parseFloat(this.options.gridSquares)*2)/2 < 1) || this.isAoe();
 	}
 	isPlayerLocked() {
-		return !window.DM && (this.options.restrictPlayerMove || this.options.locked) && !this.isCurrentPlayer();
+		return !window.DM && ((this.options.restrictPlayerMove && this.options.share_vision != window.myUser && this.options.share_vision != true) || this.options.locked) && !this.isCurrentPlayer();
 	}
 	isDMLocked() {
 		return window.DM && this.options.locked && !$('#select_locked .ddbc-tab-options__header-heading').hasClass('ddbc-tab-options__header-heading--is-active');
@@ -623,7 +650,11 @@ class Token {
 	isSelectable() {
 		if ((!window.DM && this.options.hidden) || this.options.type == 'door' || this.options.combatGroupToken) return false;
 		const tokenDiv = this.isLineAoe() ? document.querySelector(`#tokens>div[data-id='${this.options.id}'] [data-img]`) : document.querySelector(`#tokens>div[data-id='${this.options.id}']`);
-		return tokenDiv.style.pointerEvents != "none" && tokenDiv.style.display != "none" && !tokenDiv.classList.contains("ui-draggable-disabled");
+		if(tokenDiv == undefined){
+			console.warn('Token not found on scene', this)
+			return false;
+		}
+		return tokenDiv.style.pointerEvents != "none" && tokenDiv.style.display != "none" && !tokenDiv.classList.contains("ui-draggable-disabled") && !tokenDiv.classList.contains('notVisible');
 	}
 	rotate(newRotation) {
 		if (this.isPlayerLocked()) return; // don't allow rotating if the token is locked
@@ -1327,6 +1358,26 @@ class Token {
 		hpbar.append(divider);
 		hpbar.append(maxhp_input);
 		if (!this.isPlayer()) {
+			hp_input.on('wheel', function(e) {
+				const input = $(this);
+				if(!input.is(':focus'))
+					return;
+				e.preventDefault();
+				const delta = e.originalEvent.deltaY < 0 ? 1 : -1;
+				const current = parseInt(self.hp) || 0;
+				input.val(Math.max(0, current + delta));
+				input.trigger('change');
+			});
+			maxhp_input.on('wheel', function(e) {
+				const input = $(this);
+				if(!input.is(':focus'))
+					return;
+				e.preventDefault();
+				const delta = e.originalEvent.deltaY < 0 ? 1 : -1;
+				const current = parseInt(self.maxHp) || 0;
+				input.val(Math.max(1, current + delta));
+				input.trigger('change');
+			});
 			hp_input.change(function(e) {
 				$(this).val($(this).val().trim());
 				self.update_and_sync(e);
@@ -1382,7 +1433,7 @@ class Token {
 	build_ac() {
 		let bar_height = this.sizeHeight() * 0.2;
 		bar_height = Math.ceil(bar_height);
-		let acValue = (this.options.armorClass != undefined) ? this.options.armorClass : this.options.ac
+		let acValue = this.ac;
 		let ac = $("<div class='ac'/>");
 		ac.css("position", "absolute");
 		ac.css('right', "-1px");
@@ -1498,7 +1549,7 @@ class Token {
 					token.find(".hpbar").css("--temp-hp", this.tempHp);
 				}
 			}
-			if (!this.options.ac && !this.options.armorClass) { // even if we are supposed to show it, only show them if they have something to show.
+			if (!this.ac) { // even if we are supposed to show it, only show them if they have something to show.
 				token.find(".ac").hide();
 			} else {
 				token.find(".ac").show();
@@ -1696,59 +1747,7 @@ class Token {
 						clearTimeout(hoverConditionTimer);
 						hoverConditionTimer = setTimeout(function () {
 			            	build_and_display_sidebar_flyout(e.clientY, function (flyout) {
-					            flyout.addClass("prevent-sidebar-modal-close"); // clicking inside the tooltip should not close the sidebar modal that opened it
-					            flyout.addClass('note-flyout');
-					            const tooltipHtml = $(noteHover);
-
-					            flyout.append(tooltipHtml);
-					            let sendToGamelogButton = $(`<a class="ddbeb-button" href="#">Send To Gamelog</a>`);
-					            sendToGamelogButton.css({ "float": "right" });
-					            sendToGamelogButton.on("click", function(ce) {
-					                ce.stopPropagation();
-					                ce.preventDefault();
-									
-					                send_html_to_gamelog(noteHover);
-					            });
-					            let flyoutLeft = e.clientX+20
-					            if(flyoutLeft + 400 > window.innerWidth){
-					            	flyoutLeft = window.innerWidth - 420
-					            }
-								flyout.css({
-									left: flyoutLeft,
-									width: '400px'
-								})
-								let flyoutTop = e.clientY;
-								let flyoutHeight = flyout.height() + 50;
-								let bottom = (e.clientY + flyoutHeight);
-
-								if (bottom > window.innerHeight) {
-									flyoutTop = flyoutTop - (bottom - window.innerHeight) - 50;
-								}
-								flyout.css('top', flyoutTop);
-
-					            const buttonFooter = $("<div></div>");
-					            buttonFooter.css({
-					                height: "40px",
-					                width: "100%",
-					                position: "relative",
-					                background: "#fff"
-					            });
-
-					            flyout.append(buttonFooter);
-					            buttonFooter.append(sendToGamelogButton);
-
-								
-
-					            flyout.hover(function (hoverEvent) {
-					                if (hoverEvent.type === "mouseenter") {
-					                    clearTimeout(removeToolTipTimer);
-					                    removeToolTipTimer = undefined;
-					                } else {
-					                    remove_tooltip(500);
-					                }
-					            });
-
-					            flyout.css("background-color", "#fff");
+					           setup_tooltip_flyout(flyout, noteHover, ['note-flyout'], e)
 					        });
 			        	}, 500);		
 					
@@ -1850,59 +1849,7 @@ class Token {
 							clearTimeout(hoverConditionTimer);
 							hoverConditionTimer = setTimeout(function () {
 				            	build_and_display_sidebar_flyout(e.clientY, function (flyout) {
-						            flyout.addClass("prevent-sidebar-modal-close"); // clicking inside the tooltip should not close the sidebar modal that opened it
-						            flyout.addClass('note-flyout');
-						            const tooltipHtml = $(noteHover);
-	
-						            flyout.append(tooltipHtml);
-						            let sendToGamelogButton = $(`<a class="ddbeb-button" href="#">Send To Gamelog</a>`);
-						            sendToGamelogButton.css({ "float": "right" });
-						            sendToGamelogButton.on("click", function(ce) {
-						                ce.stopPropagation();
-						                ce.preventDefault();
-										
-						                send_html_to_gamelog(noteHover);
-						            });
-						            let flyoutLeft = e.clientX+20
-						            if(flyoutLeft + 400 > window.innerWidth){
-						            	flyoutLeft = window.innerWidth - 420
-						            }
-									flyout.css({
-										left: flyoutLeft,
-										width: '400px'
-									})
-									let flyoutTop = e.clientY;
-									let flyoutHeight = flyout.height() + 25;
-									let bottom = (e.clientY + flyoutHeight);
-
-									if (bottom > window.innerHeight) {
-										flyoutTop = flyoutTop - (bottom - window.innerHeight) - 25;
-									}
-									flyout.css('top', flyoutTop);
-	
-						            const buttonFooter = $("<div></div>");
-						            buttonFooter.css({
-						                height: "40px",
-						                width: "100%",
-						                position: "relative",
-						                background: "#fff"
-						            });
-	
-						            flyout.append(buttonFooter);
-						            buttonFooter.append(sendToGamelogButton);
-	
-									
-	
-						            flyout.hover(function (hoverEvent) {
-						                if (hoverEvent.type === "mouseenter") {
-						                    clearTimeout(removeToolTipTimer);
-						                    removeToolTipTimer = undefined;
-						                } else {
-						                    remove_tooltip(500);
-						                }
-						            });
-	
-						            flyout.css("background-color", "#fff");
+									setup_tooltip_flyout(flyout, noteHover, ['note-flyout'], e)
 						        });
 				        	}, 500);		
 						
@@ -1959,69 +1906,7 @@ class Token {
 						clearTimeout(hoverNoteTimer);
 						hoverNoteTimer = setTimeout(function () {
 			            	build_and_display_sidebar_flyout(e.clientY, async function (flyout) {
-					            flyout.addClass("prevent-sidebar-modal-close"); // clicking inside the tooltip should not close the sidebar modal that opened it
-					            flyout.addClass('note-flyout');
-					            const tooltipHtml = $(noteHover);
-								await window.JOURNAL.translateHtmlAndBlocks(tooltipHtml, noteId);	
-								add_journal_roll_buttons(tooltipHtml);
-								window.JOURNAL.add_journal_tooltip_targets(tooltipHtml);
-								add_stat_block_hover(tooltipHtml, tokenId);
-								add_aoe_statblock_click(tooltipHtml, tokenId);
-
-								$(tooltipHtml).find('.add-input').each(function(){window.JOURNAL.addTrackedInputs($(this), {noteId})})
-					            flyout.append(tooltipHtml);
-					            let sendToGamelogButton = $(`<a class="ddbeb-button" href="#">Send To Gamelog</a>`);
-					            sendToGamelogButton.css({ "float": "right" });
-					            sendToGamelogButton.on("click", function(ce) {
-					                ce.stopPropagation();
-					                ce.preventDefault();
-									
-					                send_html_to_gamelog(noteHover);
-					            });
-					            let flyoutLeft = e.clientX+20
-					            if(flyoutLeft + 400 > window.innerWidth){
-					            	flyoutLeft = window.innerWidth - 420
-					            }
-
-								flyout.css({
-									left: flyoutLeft,
-									width: '400px'
-								})
-								let flyoutTop = e.clientY;
-								let flyoutHeight = flyout.height() + 25;
-								let bottom = (e.clientY + flyoutHeight);
-
-								if (bottom > window.innerHeight) {
-									flyoutTop = flyoutTop - (bottom - window.innerHeight) - 25;
-								}
-								flyout.css('top', flyoutTop);
-					            const buttonFooter = $("<div></div>");
-					            buttonFooter.css({
-					                height: "40px",
-					                width: "100%",
-					                position: "relative",
-					                background: "#fff"
-					            });
-					            window.JOURNAL.block_send_to_buttons(flyout);
-					            flyout.append(buttonFooter);
-					            buttonFooter.append(sendToGamelogButton);
-					            flyout.find("a").attr("target","_blank");
-					      		flyout.off('click').on('click', '.tooltip-hover[href*="https://www.dndbeyond.com/sources/dnd/"], .int_source_link ', function(event){
-									event.preventDefault();
-									render_source_chapter_in_iframe(event.target.href);
-								});
-								
-
-					            flyout.hover(function (hoverEvent) {
-					                if (hoverEvent.type === "mouseenter") {
-					                    clearTimeout(removeToolTipTimer);
-					                    removeToolTipTimer = undefined;
-					                } else {
-					                    remove_tooltip(500);
-					                }
-					            });
-
-					            flyout.css("background-color", "#fff");
+					            setup_tooltip_flyout(flyout, noteHover, ['note-flyout'], e, {id:noteId, token:self});
 					        });
 			        	}, 500);		
 					
@@ -2220,8 +2105,15 @@ class Token {
 		
 
 	}
-	throttlePlace = throttle((animationDuration) => {
-				try{
+
+	throttlePlace = throttle((animationDuration, sceneId = window.CURRENT_SCENE_DATA.id, callback=()=>{}) => {
+		if(window.all_token_objects?.[this.options.id] != undefined)
+			window.all_token_objects[this.options.id].options = $.extend(true, {}, this.options);
+		if(sceneId != window.CURRENT_SCENE_DATA.id){
+			console.warn('Attempted to add token not part of this scene. Most likely due to fast map swaps and the throttle time on token placement.', this, 'From:', sceneId, 'On:', window.CURRENT_SCENE_DATA);
+			return;
+		}
+		try{
 			if(!this.options.id.includes('exampleToken') && (isNaN(parseFloat(this.options.left)) || isNaN(parseInt(this.options.top)))){// prevent errors with NaN positioned tokens - delete them as catch all. 
 				this.options.deleteableByPlayers = true;
 				this.delete();
@@ -2359,7 +2251,7 @@ class Token {
 				let tokenBorderWidth = (this.options.underDarkness == true) ? (this.sizeWidth() / window.CURRENT_SCENE_DATA.hpps * 2 / window.CURRENT_SCENE_DATA.scale_factor)+"px" : (this.sizeWidth() / window.CURRENT_SCENE_DATA.hpps * 2)+"px";
 				old.find(".token-image").css("--token-border-width", tokenBorderWidth);
 
-				if (old.attr('width') !== this.sizeWidth() || old.attr('height') !== this.sizeHeight()) {
+				if (old.width() !== this.sizeWidth() || old.height() !== this.sizeHeight()) {
 					// NEED RESIZING			
 					old.find(".token-image").css({
 						"max-width": this.sizeWidth(),
@@ -2694,9 +2586,9 @@ class Token {
 						'max-height': `var(--token-height)`,
 						'--z-index-diff': old.css('--z-index-diff'),
 						'--token-scale': old.css('--token-scale'),
-	    					'--token-rotation': old.css('--token-rotation'),
-	    					'--token-heading': old.css('--token-heading'),						
-	    					'--token-flip-x': old.css('--token-flip-x')						
+						'--token-rotation': old.css('--token-rotation'),
+						'--token-heading': old.css('--token-heading'),						
+						'--token-flip-x': old.css('--token-flip-x')						
 					})
 					copyImage.animate({
 							left: parseFloat(this.options.left) / window.CURRENT_SCENE_DATA.scale_factor,
@@ -2806,7 +2698,7 @@ class Token {
 						const copyImage = oldImage.clone();
 						underDarkToken.append(copyImage);
 						
-							if (this.options.imgsrc.startsWith('above-bucket-not-a-url')) {
+						if (this.options.imgsrc.startsWith('above-bucket-not-a-url')) {
 							const fileSrc = this.options.imgsrc.replace('above-bucket-not-a-url', '');
 							if (!copyImage.attr('src')?.includes(encodeURI(fileSrc))) {
 								updateTokenSrc(this.options.imgsrc, copyImage, this.options.videoToken);
@@ -2815,7 +2707,6 @@ class Token {
 						else if(copyImage.attr('src') != parse_img(this.options.imgsrc)){
 							updateTokenSrc(parse_img(this.options.imgsrc), copyImage, this.options.videoToken);
 						}
-
 				}  	
 				else{
 		    		$(`[data-notatoken='notatoken_${this.options.id}']`).remove();
@@ -2824,7 +2715,6 @@ class Token {
 			}
 			else { // adding a new token
 				// console.group("new token")
-
 				let tok = $("<div/>");
 				
 				let bar_height = Math.floor(this.sizeHeight() * 0.2);
@@ -3079,17 +2969,23 @@ class Token {
 					x: 0,
 					y: 0
 				};
-			 	let ctxImageData;
 				
+			 	let ctxImageData;
+				let dragFrameRequest = null;
+				let pendingDragState = null;
 
 				tok.draggable({
 					iframeFix: false,
 					grid: [1, 1],
 					stop: function (event) {
 						event.stopPropagation();
-						//$("#VTT").css('--grid-overlay-on-tmp', '0');	commented out as it's not consistent and is confusing can reasses if we enable other options for grid over			
 						window.DRAGGING = false;
 						window.enable_window_mouse_handlers();
+
+						cancelAnimationFrame(dragFrameRequest);
+						dragFrameRequest = null;
+						pendingDragState = null;
+
 						delete window.tokenVisionQuery;
 						ctxImageData = null;
 						if(window.TOKEN_OBJECTS[self.options.id] != undefined){
@@ -3134,8 +3030,7 @@ class Token {
 						}	
 													
 						draw_selected_token_bounding_box();
-						window.toggleSnap=false;
-
+						
 						pauseCursorEventListener = false;
 						clearTimeout(window.dragStopTimer);
 						window.dragStopTimer = setTimeout(() => {
@@ -3155,7 +3050,6 @@ class Token {
 							if (get_avtt_setting_value("allowTokenMeasurement")) {
 								$("#temp_overlay").css("z-index", "50");
 							}
-
 							window.DRAWFUNCTION = "select"
 							window.DRAGGING = true;
 							clearTimeout(contextMenuLongPressTimer);
@@ -3297,81 +3191,101 @@ class Token {
 					 * @param {Object} ui UI-object
 					 */
 					drag: function(event, ui) {
-						try{
-							event.stopPropagation();
+						try {
+							event.stopPropagation();															
 							let zoom = parseFloat(window.ZOOM);
 
-							let original = ui.originalPosition;
-							let tokenX = (ui.position.left - ((zoom-parseFloat(window.orig_zoom)) * parseFloat(self.sizeWidth())/2)) / zoom;
-							let tokenY = (ui.position.top - ((zoom-parseFloat(window.orig_zoom)) * parseFloat(self.sizeHeight())/2)) / zoom;
-							let tinyToken = (Math.round(parseFloat(window.TOKEN_OBJECTS[this.dataset.id].options.gridSquares)*2)/2 < 1) || window.TOKEN_OBJECTS[this.dataset.id].isAoe();
+							let tokenX = (ui.position.left - ((zoom - parseFloat(window.orig_zoom)) * parseFloat(self.sizeWidth()) / 2)) / zoom;
+							let tokenY = (ui.position.top - ((zoom - parseFloat(window.orig_zoom)) * parseFloat(self.sizeHeight()) / 2)) / zoom;
+							let tinyToken = (Math.round(parseFloat(window.TOKEN_OBJECTS[this.dataset.id].options.gridSquares) * 2) / 2 < 1) || window.TOKEN_OBJECTS[this.dataset.id].isAoe();
 
-							if (should_snap_to_grid() && (window.CURRENT_SCENE_DATA.gridType == '2' || window.CURRENT_SCENE_DATA.gridType == '3')) { // ) {
-								tokenX = tokenX+self.sizeWidth()/2
-								tokenY = tokenY+self.sizeHeight()/2
+							if (should_snap_to_grid() && (window.CURRENT_SCENE_DATA.gridType == '2' || window.CURRENT_SCENE_DATA.gridType == '3')) {
+								tokenX = tokenX + self.sizeWidth() / 2;
+								tokenY = tokenY + self.sizeHeight() / 2;
 							}
-							//snap to where mouse is
+
 							let tokenPosition = snap_point_to_grid(tokenX, tokenY, undefined, tinyToken, self.options.size);
 
-							if(self.walkableArea.bottom != null && self.walkableArea.right != null){ // need to figure out what's causing these to be null but this is a workaround for the error for now
+							if (self.walkableArea.bottom != null && self.walkableArea.right != null) {
+								// need to figure out what's causing these to be null but this is a workaround for the error for now
 								// Constrain token within scene
 								tokenPosition.x = clamp(tokenPosition.x, self.walkableArea.left, self.walkableArea.right);
 								tokenPosition.y = clamp(tokenPosition.y, self.walkableArea.top, self.walkableArea.bottom);
 							}
-					
 							//we round css values to prevent sub pixel rendering which causes blurriness or stetching the token image
 							ui.position = {
 								left: Math.round(tokenPosition.x),
 								top: Math.round(tokenPosition.y)
 							};
+							pendingDragState = {
+								tokenPosition,
+								uiPosition: ui.position,
+								uiOriginalPosition: ui.originalPosition,
+								zoom
+							};
+							if (!dragFrameRequest) {
+								dragFrameRequest = requestAnimationFrame(() => {
+									dragFrameRequest = null;
+									const currState = pendingDragState;
+									pendingDragState = null;
+									if (!currState) return;
 
-							const canMove = self.setTokenDragPos(tokenPosition.x, tokenPosition.y, tok[0], ctxImageData);
-							if (canMove){	
-								window.oldTokenPosition[self.options.id] = ui.position;				
-							}else{
-								ui.position = (window.oldTokenPosition[self.options.id] != undefined) ? window.oldTokenPosition[self.options.id] : {left: ui.originalPosition.left/zoom, top: ui.originalPosition.top/zoom};
-							}
-							if (self.selected && window.dragSelectedTokens.length>1 && !shiftHeld) {
-								// if dragging on a selected token, we should move also the other selected tokens
-								// try to move other tokens by the same amount
-								let offsetLeft = tokenPosition.x - parseFloat(self.orig_left);
-								let offsetTop = tokenPosition.y - parseFloat(self.orig_top);
+									const canMove = self.setTokenDragPos(currState.tokenPosition.x, currState.tokenPosition.y, tok[0], ctxImageData);
 
-								for (let tok of window.dragSelectedTokens){
-									let id = tok.getAttribute("data-id");
-									if (id != self.options.id) {
-										let curr = window.TOKEN_OBJECTS[id];
-										tokenX = offsetLeft + parseFloat(curr.orig_left);
-										tokenY = offsetTop + parseFloat(curr.orig_top);
-										curr.setTokenDragPos(tokenX, tokenY, tok, ctxImageData);
+									if (canMove) {
+										window.oldTokenPosition[self.options.id] = currState.uiPosition;
+									} else {
+										ui.position = window.oldTokenPosition[self.options.id] != undefined
+											? window.oldTokenPosition[self.options.id]
+											: { left: currState.uiOriginalPosition.left / currState.zoom, top: currState.uiOriginalPosition.top / currState.zoom };
 									}
-								}													
-							}
 
-							const allowTokenMeasurement = get_avtt_setting_value("allowTokenMeasurement")
-							
-							if (allowTokenMeasurement) {				
-								if(self.isAoe() && self.options.imgsrc.match(/aoe-shape-cone|aoe-shape-line|aoe-shape-square/gi) && (window.dragSelectedTokens.length == 1 || shiftHeld)){					
-									let origin = getOrigin(self)
+								
+									if (self.selected && window.dragSelectedTokens.length > 1 && !shiftHeld) {
+										// if dragging on a selected token, we should move also the other selected tokens
+										// try to move other tokens by the same amount
+										let offsetLeft = currState.tokenPosition.x - parseFloat(self.orig_left);
+										let offsetTop = currState.tokenPosition.y - parseFloat(self.orig_top);
+
+										for (let selectedTok of window.dragSelectedTokens) {
+											let id = selectedTok.getAttribute("data-id");
+											if (id != self.options.id) {
+												let curr = window.TOKEN_OBJECTS[id];
+												let tokenX = offsetLeft + parseFloat(curr.orig_left);
+												let tokenY = offsetTop + parseFloat(curr.orig_top);
+												curr.setTokenDragPos(tokenX, tokenY, selectedTok, ctxImageData);
+											}
+										}
+									}
 									
-									WaypointManager.storeWaypoint(WaypointManager.currentWaypointIndex, window.BEGIN_MOUSEX/window.CURRENT_SCENE_DATA.scale_factor, window.BEGIN_MOUSEY/window.CURRENT_SCENE_DATA.scale_factor, origin.x/window.CURRENT_SCENE_DATA.scale_factor, origin.y/window.CURRENT_SCENE_DATA.scale_factor);		
-									WaypointManager.draw(origin.x/window.CURRENT_SCENE_DATA.scale_factor, origin.y/window.CURRENT_SCENE_DATA.scale_factor);	
-								}
-								else{
-									let tokenMidX = tokenPosition.x + Math.round(self.sizeWidth() / 2);
-									let tokenMidY = tokenPosition.y + Math.round(self.sizeHeight() / 2);
+									const allowTokenMeasurement = get_avtt_setting_value("allowTokenMeasurement");
 
-									WaypointManager.storeWaypoint(WaypointManager.currentWaypointIndex, window.BEGIN_MOUSEX/window.CURRENT_SCENE_DATA.scale_factor, window.BEGIN_MOUSEY/window.CURRENT_SCENE_DATA.scale_factor, tokenMidX/window.CURRENT_SCENE_DATA.scale_factor, tokenMidY/window.CURRENT_SCENE_DATA.scale_factor);		
-									WaypointManager.draw(Math.round(tokenPosition.x + (self.sizeWidth() / 2))/window.CURRENT_SCENE_DATA.scale_factor, Math.round(tokenPosition.y + self.sizeHeight() + 10)/window.CURRENT_SCENE_DATA.scale_factor);
-								}
+									if (allowTokenMeasurement) {				
+										if(self.isAoe() && self.options.imgsrc.match(/aoe-shape-cone|aoe-shape-line|aoe-shape-square/gi) && (window.dragSelectedTokens.length == 1 || shiftHeld)){					
+											let origin = getOrigin(self)
+											
+											WaypointManager.storeWaypoint(WaypointManager.currentWaypointIndex, window.BEGIN_MOUSEX/window.CURRENT_SCENE_DATA.scale_factor, window.BEGIN_MOUSEY/window.CURRENT_SCENE_DATA.scale_factor, origin.x/window.CURRENT_SCENE_DATA.scale_factor, origin.y/window.CURRENT_SCENE_DATA.scale_factor);		
+											WaypointManager.draw(origin.x/window.CURRENT_SCENE_DATA.scale_factor, origin.y/window.CURRENT_SCENE_DATA.scale_factor);	
+										}
+										else{
+											let tokenMidX = currState.tokenPosition.x + Math.round(self.sizeWidth() / 2);
+											let tokenMidY = currState.tokenPosition.y + Math.round(self.sizeHeight() / 2);
+
+											WaypointManager.storeWaypoint(WaypointManager.currentWaypointIndex, window.BEGIN_MOUSEX/window.CURRENT_SCENE_DATA.scale_factor, window.BEGIN_MOUSEY/window.CURRENT_SCENE_DATA.scale_factor, tokenMidX/window.CURRENT_SCENE_DATA.scale_factor, tokenMidY/window.CURRENT_SCENE_DATA.scale_factor);		
+											WaypointManager.draw(Math.round(currState.tokenPosition.x + (self.sizeWidth() / 2))/window.CURRENT_SCENE_DATA.scale_factor, Math.round(currState.tokenPosition.y + self.sizeHeight() + 10)/window.CURRENT_SCENE_DATA.scale_factor);
+										}
+									}
+
+									if (!self.options.hidden) {
+										sendTokenPositionToPeers(currState.tokenPosition.x, currState.tokenPosition.y, self.options.id, allowTokenMeasurement);
+									}
+
+									if (window.EXPERIMENTAL_SETTINGS.dragLight == true) {
+										throttleLight();
+									}
+								});
 							}
-						
-							if (!self.options.hidden) {
-								sendTokenPositionToPeers(tokenPosition.x, tokenPosition.y, self.options.id, allowTokenMeasurement);
-							}
-							if(window.EXPERIMENTAL_SETTINGS.dragLight == true)
-								throttleLight();
-						} catch(e){
+						} catch (e) {
 							showError(e);
 							$(tok).trigger('mouseup');
 						}
@@ -3569,7 +3483,7 @@ class Token {
 		    });  
 			$(`[data-notatoken='notatoken_${this.options.id}']`).children('div:not(.base):not(.token-image):not(.hpvisualbar):not(.dead)').remove();
 
-
+			callback();
 			return true;
 		}
 		catch (e) {
@@ -3580,8 +3494,8 @@ class Token {
 			return;
 		}
 	}, 1000)
-	place(animationDuration) {
-		this.throttlePlace(animationDuration);
+	place(animationDuration, sceneId = window.CURRENT_SCENE_DATA.id, callback=()=>{}) {
+		this.throttlePlace(animationDuration, sceneId, callback);
 	}
 
 	// key: String, numberRemaining: Number; example: track_ability("1stlevel", 2) // means they have 2 1st level spell slots remaining
@@ -3702,9 +3616,9 @@ function default_options() {
 function center_of_view() {
 	let centerX = (window.innerWidth/2) + window.scrollX 
 	if($("#hide_rightpanel").hasClass("point-right")) {
-    centerX = centerX - (get_sidebar_width() / 2 + 20); // half sidebar + scrollbar offset
+    centerX = centerX - (get_sidebar_width() / 2);
   }
-	let centerY = (window.innerHeight/2) + window.scrollY - 20 // 20 = scrollbar
+	let centerY = (window.innerHeight/2) + window.scrollY 
 	return { x: centerX, y: centerY };
 }
 
@@ -3751,20 +3665,19 @@ function snap_point_to_grid(mapX, mapY, forceSnap = false, tinyToken = false, to
 	}
 }
 
-function convert_point_from_view_to_map(pageX, pageY, forceNoSnap = false, ignoreOffset = false) {
-	// adjust for map offset and zoom
-	const startX = ignoreOffset == false ? window.CURRENT_SCENE_DATA.offsetx : 0;
-	const startY = ignoreOffset == false ? window.CURRENT_SCENE_DATA.offsety : 0;
-	let mapX = ((pageX - window.VTTMargin) * (1.0 / window.ZOOM)) - startX;
-	let mapY = ((pageY - window.VTTMargin) * (1.0 / window.ZOOM)) - startY;
+function convert_point_from_view_to_map(pageX, pageY, forceNoSnap = false) {
+	// adjust for map zoom
+
+	let mapX = ((pageX - window.VTTMargin) * (1.0 / window.ZOOM));
+	let mapY = ((pageY - window.VTTMargin) * (1.0 / window.ZOOM));
 	if (forceNoSnap === true) {
 		return { x: mapX, y: mapY };
 	}
 	let snapped = snap_point_to_grid(mapX, mapY, forceNoSnap);
 
 	return {
-		x: snapped.x + startX,
-		y: snapped.y + startY
+		x: snapped.x,
+		y: snapped.y
 	};
 }
 
@@ -3808,6 +3721,7 @@ function place_token_at_map_point(tokenObject, x, y, forcePlaceAndSize = false, 
 	};
 	forcePlaceAndSize = forcePlaceAndSize || 
 		options.alternativeImagesCustomizations?.[options.imgsrc]?.tokenSize != undefined;
+
 	if(window.all_token_objects[options.id] !== undefined && options.alternativeImages){
 		if(!(window.all_token_objects[options.id].options.imgsrc in options.alternativeImages)){
 			window.all_token_objects[options.id].options.imgsrc = options.imgsrc;
@@ -3819,6 +3733,7 @@ function place_token_at_map_point(tokenObject, x, y, forcePlaceAndSize = false, 
 			alternativeImages: alternativeImages
 		};
 	}
+
 	// aoe tokens have classes instead of images
 	if (typeof options.imgsrc === "string" && !options.imgsrc.startsWith("class")) {
 		options.imgsrc = parse_img(options.imgsrc);
@@ -3829,7 +3744,9 @@ function place_token_at_map_point(tokenObject, x, y, forcePlaceAndSize = false, 
 	}
 
 	if (options.size == undefined || forcePlaceAndSize) {
-		
+		if(forcePlaceAndSize){
+			options.gridSquares = null;
+		}
 
 		if (options.gridSquares != undefined && parseFloat(options.gridSquares) != NaN){
 			options.size = window.CURRENT_SCENE_DATA.hpps * parseFloat(options.gridSquares);
@@ -4383,8 +4300,8 @@ function setTokenLight (token, options) {
 		const opacity2Value = options?.light2?.color ? options.light2.color.replace(/[a-zA-Z\(\)\s]/g, '').split(',').splice(3, 1) : 1;
 		const daylightOpacityValue = window.CURRENT_SCENE_DATA?.daylight ? window.CURRENT_SCENE_DATA.daylight.replace(/[a-zA-Z\(\)\s]/g, '').split(',').splice(3, 1) : 1;
 
-		let clippath = window.lineOfSightPolygons ? `polygon(${window.lineOfSightPolygons[options.id]?.clippath})` : undefined;
-		let devilsightClip = window.lineOfSightPolygons ? `polygon(${window.lineOfSightPolygons[options.id]?.devilsightClip})` : undefined;
+		let clippath = window.lineOfSightPolygons?.[options.id]?.clippath !== undefined ? `polygon(${window.lineOfSightPolygons[options.id]?.clippath})` : undefined;
+		let devilsightClip = window.lineOfSightPolygons?.[options.id]?.devilsightClip !== undefined ? `polygon(${window.lineOfSightPolygons[options.id]?.devilsightClip})` : undefined;
 
 		const lightStyles = `width:${totalSize }px;
 							height:${totalSize }px;
@@ -4405,7 +4322,7 @@ function setTokenLight (token, options) {
 
 
 		const visionRadius = visionSize ? (visionSize + (optionsSize / 2)) : 0;
-		const visionBg = `radial-gradient(${options.vision.color ? options.vision.color : `rgba(142, 142, 142, 1)`} ${visionRadius}px, #00000000 ${visionRadius}px)`;
+		const visionBg = `radial-gradient(${options.vision?.color ?? `rgba(142, 142, 142, 1)`} ${visionRadius}px, #00000000 ${visionRadius}px)`;
 		const totalVisionSize = optionsSize + (2 * visionSize);
 		const visionAbsPosOffset = (optionsSize - totalVisionSize) / 2;
 		const visionStyles = `width:${totalVisionSize }px;
@@ -4422,7 +4339,7 @@ function setTokenLight (token, options) {
 		
 		const devilsightRadius = devilsightSize ? (devilsightSize + (optionsSize / 2)) : 0;
 	
-		const devilsightBg = `radial-gradient(${options.devilsight.color ? options.devilsight.color : `rgba(142, 142, 142, 1)`} ${devilsightRadius}px, #00000000 ${devilsightRadius}px)`;
+		const devilsightBg = `radial-gradient(${options.devilsight?.color ?? `rgba(142, 142, 142, 1)`} ${devilsightRadius}px, #00000000 ${devilsightRadius}px)`;
 		const totalDevilsightSize = optionsSize + (2 * devilsightSize);
 		const devilsightAbsPosOffset = (optionsSize - totalDevilsightSize) / 2;
 		const devilsightStyles = `width:${totalDevilsightSize }px;
@@ -4438,7 +4355,7 @@ function setTokenLight (token, options) {
 							`;
 		
 		const truesightRadius = truesightSize ? (truesightSize + (optionsSize / 2)) : 0;
-		const truesightBg = `radial-gradient(${options.truesight.color ? options.truesight.color : `rgba(142, 142, 142, 1)`} ${truesightRadius}px, #00000000 ${truesightRadius}px)`;
+		const truesightBg = `radial-gradient(${options.truesight?.color ?? `rgba(142, 142, 142, 1)`} ${truesightRadius}px, #00000000 ${truesightRadius}px)`;
 		const totaltruesightSize = optionsSize + (2 * truesightSize);
 		const truesightAbsPosOffset = (optionsSize - totaltruesightSize) / 2;
 		const truesightStyles = `width:${totaltruesightSize }px;
@@ -4619,7 +4536,6 @@ function setTokenBase(token, options) {
 		options.square = true;
 		options.legacyaspectratio = false;
 		if(options.tokenStyleSelect === "definitelyNotAToken" || options.tokenStyleSelect === "labelToken"){
-			options.restrictPlayerMove = true;
 			options.disablestat = true;
 			options.disableborder = true;
 			options.disableaura = true;
@@ -4865,7 +4781,7 @@ function grouprotate_commit(angle) {
 			sceneToken.css('rotate',`-${(angle+parseFloat(sceneToken.css('--token-rotation')))%360}deg`);
 			currentplace = sceneToken.find('.token-image').offset();
 		}
-		newCoords = convert_point_from_view_to_map(currentplace.left, currentplace.top, true, true)
+		newCoords = convert_point_from_view_to_map(currentplace.left, currentplace.top, true)
 		token.options.left = `${newCoords.x}px`;
 		token.options.top = `${newCoords.y}px`;
 	});
@@ -5265,7 +5181,7 @@ function copy_selected_tokens(teleporterTokenId=undefined) {
 	
 }
 
-function paste_selected_tokens(x, y, teleporter = undefined, teleportedTokenData=undefined) {
+function paste_selected_tokens(x, y, teleporter = undefined) {
 	if (!teleporter && !window.DM) return;
 	if (window.TOKEN_PASTE_BUFFER == undefined) {
 		window.TOKEN_PASTE_BUFFER = [];
@@ -5369,7 +5285,7 @@ function delete_selected_walls() {
 		sync_drawings({wallsChanged: true});
 	}
 }
-function delete_selected_tokens() {
+function delete_selected_tokens(removeFromCombatTracker = true) {
 	// move all the tokens into a separate list so the DM can "undo" the deletion
 	let tokensToDelete = [];
 	forTokens((token) => {
@@ -5383,9 +5299,8 @@ function delete_selected_tokens() {
 	if (tokensToDelete.length == 0) return;
 	window.TOKEN_OBJECTS_RECENTLY_DELETED = {};
 	tokensToDelete.forEach(t => window.TOKEN_OBJECTS_RECENTLY_DELETED[t.options.id] = Object.assign({}, t.options));
-
 	for (let i = 0; i < tokensToDelete.length; i++) {
-		tokensToDelete[i].delete(true);
+		tokensToDelete[i].delete(true, removeFromCombatTracker);
 	}
 	draw_selected_token_bounding_box(); // redraw the selection box
 }

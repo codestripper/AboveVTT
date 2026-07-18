@@ -215,7 +215,7 @@ window.importAvttAudioSelections = importAvttAudioSelections;
  */
 
 const debounceSearch = mydebounce((searchFilter) => {      
-        window.TRACK_LIBRARY.filterTrackLibrary(searchFilter)
+    window.TRACK_LIBRARY.filterTrackLibrary(searchFilter)
 }, 500);
 
 
@@ -443,10 +443,10 @@ function init_mixer() {
                     setTimeout(function () { waitForPlayer(id, callback)}, 250);
                 }
             }
-
+            mixerChannels.append(item);
             waitForPlayer(id, () => {
                 $(item).append(channelNameDiv, window.MIXER.channelVolumeSlider(id), channel_play_pause, loop, remove, window.MIXER.channelProgressBar(id));
-                mixerChannels.append(item);
+                
                 if (channel.paused) {
                     play_svg.css('display', 'block');
                     pause_svg.css('display', 'none');
@@ -646,8 +646,21 @@ function init_mixer() {
             "--overflow-speed": (overflowVal - nameWidth < 0) ? parseInt(nameWidth)*10+'ms' : 800+'ms'
         });   
     })
-    $("#sounds-panel .sidebar-panel-header").append(header, playlistInput, addPlaylistButton, copyPlaylistButton, removePlaylistButton, playlistFields, masterVolumeSlider(), mixerChannels);
+    const soundPanelHeader = $("#sounds-panel .sidebar-panel-header");
+    soundPanelHeader.append(header, playlistInput, addPlaylistButton, copyPlaylistButton, removePlaylistButton, playlistFields, masterVolumeSlider(), mixerChannels);
     $('#master-volume').append(clear, sequentialPlay, crossFade, playPause);
+    soundPanelHeader.resizable({
+        addClasses: false,
+        handles: "s",
+        containment: "#windowContainment",
+        start: function (event, ui) {
+            $(event.currentTarget).append($('<div class="iframeResizeCover"></div>'));
+        },
+        stop: function (event, ui) {
+            $('.iframeResizeCover').remove();
+        },
+        minHeight: 0
+    });
 }
 
 
@@ -697,7 +710,7 @@ function init_trackLibrary() {
     const header = document.createElement("h3");
     header.textContent = "Track Library";
 
-    const searchTrackLibary = $(`<input type='search' placeholder='Search' style='margin-bottom: 5px; width: 97%;'></input>`)
+    const searchTrackLibary = $(`<input type='search' placeholder='Search' style='margin-bottom: 5px; width: 97%;position: sticky; top: -11px; z-indeX: 1;'></input>`)
     searchTrackLibary.off().on('change keyup blur search', (e) => {      
         debounceSearch(e.target.value);
     });
