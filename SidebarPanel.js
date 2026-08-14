@@ -378,7 +378,7 @@ function build_token_option_select_input(option, currentValue, changeHandler) {
     }
   }
   inputElement.change(function (event) {
-    console.log("update", event.target.name, "to", event.target.value);
+    noisy_log("update", event.target.name, "to", event.target.value);
     if (event.target.value === "enabled") {
       changeHandler(option.name, true);
       update_hover_text(wrapper, option.enabledDescription);
@@ -477,6 +477,7 @@ function build_flyout_input(settingOption, currentValue, changeHandler){
     if (typeof changeHandler !== 'function') {
     changeHandler = function(){};
   }
+
   let wrapper = $(`
    <div class="token-image-modal-footer-select-wrapper" data-option-name="${settingOption.name}">
      <div class="token-image-modal-footer-title">${settingOption.label}</div>
@@ -485,10 +486,11 @@ function build_flyout_input(settingOption, currentValue, changeHandler){
   let flyoutButton = $(`<button class='sidebar-panel-footer-button avtt-small-settings-edit'>Edit</button>`);
     flyoutButton.on("click", function (clickEvent) {
         build_and_display_sidebar_flyout(clickEvent.clientY, function (flyout) {
-          let currentValue = get_avtt_setting_value(settingOption.name);
+            let currentValue = get_avtt_setting_value(settingOption.name);
+
             let optionsContainer = build_sidebar_token_options_flyout(settingOption.options, currentValue, function(name, value) {
                 currentValue[name] = value;
-            }, function(){changeHandler(settingOption.name, currentValue)}, false, true);
+            }, function(){changeHandler(settingOption.name, currentValue)}, false, true, false, settingOption);
             flyout.append(optionsContainer);
             position_flyout_left_of($('#settings-panel .sidebar-panel-body'), flyout);
         });
@@ -957,6 +959,7 @@ class SidebarListItem {
   nameOrContainingFolderMatches(searchTerm) {
     if (typeof this.name !== "string") return false;
     let fullPath = this.fullPath().replace(/^(\/Scenes)/i, '')
+    searchTerm = searchTerm.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'); 
     return fullPath.match(new RegExp(searchTerm, 'i')) != null;
   }
 }
@@ -1316,7 +1319,7 @@ function find_sidebar_list_item(html) {
   if (encounterId !== undefined && encounterId !== null && encounterId !== "") {
     foundItem = window.tokenListItems.find(item => item.isTypeEncounter() && item.encounterId === encounterId);
     if (foundItem !== undefined) {
-      console.log('find_sidebar_list_item', foundItem);
+      noisy_log('find_sidebar_list_item', foundItem);
       return foundItem;
     }
   }
@@ -1325,7 +1328,7 @@ function find_sidebar_list_item(html) {
   if (typeof sceneId === "string" && sceneId.length > 0) {
     foundItem = window.sceneListItems.find(item => item.id === sceneId);
     if (foundItem !== undefined) {
-      console.log('find_sidebar_list_item', foundItem);
+      noisy_log('find_sidebar_list_item', foundItem);
       return foundItem;
     }
   }
@@ -1334,7 +1337,7 @@ function find_sidebar_list_item(html) {
     // explicitly using '==' instead of '===' to allow (33253 == '33253') to return true
     foundItem = window.monsterListItems.find(item => item.monsterData.id == html.attr("data-monster"));
     if (foundItem !== undefined) {
-      console.log('find_sidebar_list_item', foundItem);
+      noisy_log('find_sidebar_list_item', foundItem);
       return foundItem;
     }
   }
@@ -1343,28 +1346,28 @@ function find_sidebar_list_item(html) {
   if (typeof htmlId === "string" && htmlId.length > 0) {
     foundItem = window.tokenListItems.find(li => li.id === htmlId);
     if (foundItem !== undefined) {
-      console.log('find_sidebar_list_item', foundItem);
+      noisy_log('find_sidebar_list_item', foundItem);
       return foundItem;
     }
     foundItem = window.sceneListItems.find(li => li.id === htmlId);
     if (foundItem !== undefined) {
-      console.log('find_sidebar_list_item', foundItem);
+      noisy_log('find_sidebar_list_item', foundItem);
       return foundItem;
     }
     foundItem = window.sceneListFolders.find(li => li.id === htmlId);
     if (foundItem !== undefined) {
-      console.log('find_sidebar_list_item', foundItem);
+      noisy_log('find_sidebar_list_item', foundItem);
       return foundItem;
     }
     // explicitly using '==' instead of '===' to allow (33253 == '33253') to return true
     foundItem = window.monsterListItems.find(item => item.monsterData.id == html.attr("data-monster"));
     if (foundItem !== undefined) {
-      console.log('find_sidebar_list_item', foundItem);
+      noisy_log('find_sidebar_list_item', foundItem);
       return foundItem;
     }
     foundItem = window.open5eListItems.find(item => item.id == htmlId);
     if (foundItem !== undefined) {
-      console.log('find_sidebar_list_item', foundItem);
+      noisy_log('find_sidebar_list_item', foundItem);
       return foundItem;
     }
   }
@@ -1385,13 +1388,13 @@ function find_sidebar_list_item_from_path(fullPath) {
   let foundItem;
   if (fullPath.startsWith(RootFolder.Scenes.path)) {
     foundItem = window.sceneListItems?.find(matchingPath);
-    console.log('find_sidebar_list_item_from_path sceneListItems', foundItem);
+    noisy_log('find_sidebar_list_item_from_path sceneListItems', foundItem);
     if (foundItem === undefined) {
       foundItem = window.sceneListFolders?.find(matchingPath);
-      console.log('find_sidebar_list_item_from_path sceneListFolders', foundItem);
+      noisy_log('find_sidebar_list_item_from_path sceneListFolders', foundItem);
     }
     if (foundItem !== undefined) {
-      console.log('find_sidebar_list_item_from_path', foundItem);
+      noisy_log('find_sidebar_list_item_from_path', foundItem);
       return foundItem;
     }
   }
@@ -1410,7 +1413,7 @@ function find_sidebar_list_item_from_path(fullPath) {
   if (foundItem === undefined) {
     console.warn(`find_sidebar_list_item found nothing at path: ${fullPath}`);
   }
-  console.log('find_sidebar_list_item_from_path', foundItem);
+  noisy_log('find_sidebar_list_item_from_path', foundItem);
   return foundItem;
 }
 
@@ -1615,10 +1618,10 @@ function build_sidebar_list_row(listItem) {
     </svg>`)
     }
     else if (!isAvttBucketFile && (tokenCustomizations?.tokenOptions?.videoToken == true || ['.mp4', '.webm','.mkv'].some(d => listingImage?.includes(d)))){
-        img = $(`<video disableRemotePlayback muted src="" loading="lazy" alt="${listItem.name} image" class="token-image video-listing" />`);   
+        img = $(`<video disableRemotePlayback muted src="" alt="${listItem.name} image" class="token-image video-listing" />`);   
         video = true;
     } else{
-        img = $(`<img src="" loading="lazy" alt="${listItem.name} image" class="token-image" />`);
+        img = $(`<img src="" alt="${listItem.name} image" class="token-image" />`);
     }
     updateImgSrc(listingImage, img, video, false);
     imgHolder.append(img);
@@ -1945,7 +1948,7 @@ function build_sidebar_list_row(listItem) {
       expandButton.on("click", function (clickEvent) {
         clickEvent.stopPropagation();
         let r = $(clickEvent.target).closest(".sidebar-list-item-row");
-        console.log(r);
+        noisy_log(r);
         if (r.hasClass("expanded")) {
           r.removeClass("expanded");
           r.find(".player-expansion-button .material-icons").text("expand_more");
@@ -2126,10 +2129,10 @@ function build_sidebar_list_row(listItem) {
 function did_click_row(clickEvent) {
   clickEvent.stopPropagation();
 
-  console.log("did_click_row", clickEvent);
+  noisy_log("did_click_row", clickEvent);
   let clickedRow = $(clickEvent.target).closest(".list-item-identifier");
   let clickedItem = find_sidebar_list_item(clickedRow);
-  console.log("did_click_row", clickedItem);
+  noisy_log("did_click_row", clickedItem);
 
   let rowId = clickedRow.attr('data-id');
 
@@ -2213,10 +2216,10 @@ function did_click_row(clickEvent) {
         }
       }
       else if (clickedItem.monsterData.isReleased === true || clickedItem.monsterData.isHomebrew === true) {
-        console.log(`Opening monster with id ${clickedItem.monsterData.id}, url ${clickedItem.monsterData.url}`);
+        noisy_log(`Opening monster with id ${clickedItem.monsterData.id}, url ${clickedItem.monsterData.url}`);
         open_monster_item(clickedItem);
       } else {
-        console.log(`User does not have access to monster with id ${clickedItem.monsterData.id}. Opening ${clickedItem.monsterData.url}`);
+        noisy_log(`User does not have access to monster with id ${clickedItem.monsterData.id}. Opening ${clickedItem.monsterData.url}`);
         window.open(clickedItem.monsterData.url, '_blank');
       }
       break;
@@ -2236,7 +2239,7 @@ function did_click_row(clickEvent) {
         }
       }
       else {
-        console.log(`Opening open5e monster with id ${clickedItem.monsterData.key}`);
+        noisy_log(`Opening open5e monster with id ${clickedItem.monsterData.key}`);
         open_monster_item(clickedItem, true);
       }
       break;
@@ -2270,10 +2273,10 @@ function did_click_row(clickEvent) {
  */
 function did_click_row_gear(clickEvent) {
   clickEvent.stopPropagation();
-  console.log("did_click_row_gear", clickEvent);
+  noisy_log("did_click_row_gear", clickEvent);
   let clickedRow = $(clickEvent.target).closest(".list-item-identifier");
   let clickedItem = find_sidebar_list_item(clickedRow);
-  console.log("did_click_row_gear", clickedItem);
+  noisy_log("did_click_row_gear", clickedItem);
   display_sidebar_list_item_configuration_modal(clickedItem);
 }
 
@@ -2551,7 +2554,7 @@ function edit_encounter(clickEvent) {
   clickEvent.stopPropagation();
   const clickedRow = $(clickEvent.target).closest(".list-item-identifier");
   const clickedItem = find_sidebar_list_item(clickedRow);
-  console.log('edit encounter clicked');
+  noisy_log('edit encounter clicked');
 
   const customization = find_or_create_token_customization(ItemType.Folder, clickedItem.id);
 
@@ -2817,10 +2820,10 @@ function edit_encounter(clickEvent) {
  */
 function did_click_add_button(clickEvent) {
   clickEvent.stopPropagation();
-  console.log("did_click_add_button", clickEvent);
+  noisy_log("did_click_add_button", clickEvent);
   let clickedRow = $(clickEvent.target).closest(".list-item-identifier");
   let clickedItem = find_sidebar_list_item(clickedRow);
-  console.log("did_click_add_button", clickedItem);
+  noisy_log("did_click_add_button", clickedItem);
   let hidden = clickEvent.shiftKey ? true : undefined; // we only want to force hidden if the shift key is help. otherwise let the global and override settings handle it
   create_and_place_token(clickedItem, hidden, undefined, undefined, undefined);
   update_pc_token_rows();
@@ -2902,7 +2905,7 @@ function display_folder_configure_modal(listItem) {
     console.warn("display_folder_configure_modal was called with an incorrect type", listItem);
     return;
   }
-  console.log('display_folder_configure_modal', listItem);
+  noisy_log('display_folder_configure_modal', listItem);
 
   let sidebarId = "folder-configuration-modal";
   let sidebarModal = new SidebarPanel(sidebarId, true);
@@ -2914,24 +2917,24 @@ function display_folder_configure_modal(listItem) {
 
   const renameFolder = function(newFolderName, input, event) {
     let oldPath = harvest_full_path(input);
-    console.log(`renameFolder oldPath: ${oldPath}, newFolderName: ${newFolderName}`);
+    noisy_log(`renameFolder oldPath: ${oldPath}, newFolderName: ${newFolderName}`);
     if (oldPath.endsWith(`/${newFolderName}`)) {
       // It did not change. Nothing to do here.
       return undefined;
     }
     let foundItem = find_sidebar_list_item(input);
-    console.log(`before renameFolder foundItem id: ${foundItem.id}, name: ${foundItem.name}, folderPath: ${foundItem.folderPath}`);
+    noisy_log(`before renameFolder foundItem id: ${foundItem.id}, name: ${foundItem.name}, folderPath: ${foundItem.folderPath}`);
     let updatedFullPath = rename_folder(foundItem, newFolderName, true);
-    console.log(`after  renameFolder foundItem id: ${foundItem.id}, name: ${foundItem.name}, folderPath: ${foundItem.folderPath}, updatedFullPath: ${updatedFullPath}`);
+    noisy_log(`after  renameFolder foundItem id: ${foundItem.id}, name: ${foundItem.name}, folderPath: ${foundItem.folderPath}, updatedFullPath: ${updatedFullPath}`);
     if (updatedFullPath) {
       // the name has been changed. Update the input so we know it has been changed later
       set_full_path(input, updatedFullPath);
-      console.log('inside updatedFullPath');      
+      noisy_log('inside updatedFullPath');      
       sidebarModal.updateHeader(newFolderName, updatedFullPath, "Edit or delete this folder.");
-      console.log('returning updatedFullPath');
+      noisy_log('returning updatedFullPath');
       return updatedFullPath;
     } else {
-      console.log('else updatedFullPath');
+      noisy_log('else updatedFullPath');
       // there was a naming conflict, and the user has been alerted. select the entire text so they can easily change it
       input.select();
       return false;
@@ -3011,7 +3014,7 @@ function display_folder_configure_modal(listItem) {
   saveButton.on("click", function (clickEvent) {
     if (itemType === ItemType.MyToken || itemType === ItemType.Scene || (itemType === ItemType.PC && listItem.id !== RootFolder.Players.id) || (itemType === ItemType.Encounter && listItem.id !== RootFolder.Encounters.id)){
       let nameInput = $(clickEvent.currentTarget).closest(".sidebar-panel-body").find("input[name='folderName']");
-      console.log(`saveButton nameInput`, nameInput);
+      noisy_log(`saveButton nameInput`, nameInput);
       let renameResult = renameFolder(nameInput.val(), nameInput, clickEvent);
     }
     close_sidebar_modal();
@@ -3267,6 +3270,7 @@ async function setup_tooltip_flyout(flyout, tooltipHtmlString, classes = [], eve
   flyout.attr("data-id", flyoutId);
   flyout.attr("data-parents-id", JSON.stringify(containerParentIdArray));
   const tooltipHtml = $(tooltipHtmlString);
+  tooltipHtml.find('style:not(#embededStyles)').remove();
   await window.JOURNAL.translateHtmlAndBlocks(tooltipHtml, options.id)
   add_journal_roll_buttons(tooltipHtml, options.id);
   add_aoe_statblock_click(tooltipHtml, options.id);
@@ -3281,7 +3285,16 @@ async function setup_tooltip_flyout(flyout, tooltipHtmlString, classes = [], eve
     event.preventDefault();
     render_source_chapter_in_iframe(event.target.href);
   });
+  if(options.isRitual){
+    const ritualIcon = $(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 12.17 14.83" class="ritual-icon-svg"><path fill="var(--font-color, #111)" d="M3,0H1.22A1.23,1.23,0,0,0,0,1.24V13.6a1.23,1.23,0,0,0,1.22,1.24H11.41a.77.77,0,0,0,.76-.77c0-.43-.34-1-.76-1H2.13c-.33,0-.61,0-.61-.34s.27-1,.61-1H11a1.23,1.23,0,0,0,1.22-1.24V1.24A1.23,1.23,0,0,0,11,0H3.08"></path><path fill="var(--background-color, #FFF)" d="M4.35,2.23A11.66,11.66,0,0,1,6.2,2.09a3.12,3.12,0,0,1,2.08.54A1.7,1.7,0,0,1,8.86,4,1.8,1.8,0,0,1,7.64,5.67v0A1.72,1.72,0,0,1,8.58,7a13.32,13.32,0,0,0,.53,1.88H7.84a9.62,9.62,0,0,1-.45-1.59c-.19-.88-.51-1.16-1.21-1.18H5.57V8.88H4.35Zm1.22,3H6.3c.83,0,1.35-.44,1.35-1.11S7.12,3,6.33,3a3.53,3.53,0,0,0-.76.06Z"></path></svg>`);         
+    tooltipHtml.find('[class*="-castingtime"]>[class*="-value"]').append(ritualIcon);
+  }
+  if(options.componentText != ''){
+    tooltipHtml.find('[class*="body-statblock-item-components"]').append(`<p style="margin:0; font-size:11px; opacity:0.8">${options.componentText}</p>`)
+  }
+
   flyout.append(tooltipHtml);
+  tooltipHtmlString = tooltipHtml[0].outerHTML;
   let sendToGamelogButton = $(`<a class="ddbeb-button" href="#">Send To Gamelog</a>`);
   sendToGamelogButton.css({ "float": "right" });
   sendToGamelogButton.on("click", function(ce) {
@@ -3385,7 +3398,7 @@ function position_flyout_right_of(container, flyout) {
 }
 
 function remove_sidebar_flyout(removeHoverNote) {
-  console.log("remove_sidebar_flyout");
+  noisy_log("remove_sidebar_flyout");
   let flyouts = $(`.sidebar-flyout`)
   
   if(removeHoverNote == false){
@@ -3405,7 +3418,7 @@ function remove_sidebar_flyout(removeHoverNote) {
 }
 
 async function list_item_image_flyout(hoverEvent) {
-  console.log("list_item_image_flyout", hoverEvent);
+  noisy_log("list_item_image_flyout", hoverEvent);
   $(`#list-item-image-flyout`).remove(); // never duplicate
   if (hoverEvent.type === "mouseenter") {
     const imgsrc = $(hoverEvent.currentTarget).find("img").attr("src");
@@ -3580,7 +3593,7 @@ async function enable_draggable_change_folder(listItemType) {
         }
       } else {
         let folderItem = find_sidebar_list_item(droppedFolder);
-        console.log("enable_draggable_change_folder dropped", draggedItem, folderItem);
+        noisy_log("enable_draggable_change_folder dropped", draggedItem, folderItem);
         
         for(let i=0; i<selectedItems.length; i++){
           draggedRow = $(selectedItems[i]);

@@ -222,6 +222,7 @@ function inject_chat_buttons() {
     '/roll 1d4 punch:bludgeoning damage'
     '/hit 2d20kh1+2 longsword'
     '/dmg 1d8-2 longsword:slashing'
+    '/dmg 8d6 Fireball:Fire:Dex 14'
     '/save 2d20kl1 DEX'
     '/skill 1d20+1d4 Thieves' Tools + Guidance'
     '/heal 1d4+WIS Healing Word'
@@ -582,7 +583,8 @@ function monitor_console_logs() {
         if (console.concerningLogs.length > 100) {
           console.concerningLogs.length = 100;
         }
-        if (get_avtt_setting_value("aggressiveErrorMessages")) {
+
+        if (get_avtt_setting_value("aggressiveErrorMessages") && !log.value?.some(v => typeof v == 'object' && v.doNotRelog == true)) {
           showError(new Error(`${log.type} ${log.message}`), ...log.value);
         }
       } else {
@@ -632,7 +634,6 @@ function monitor_console_logs() {
           timeStamp: TS(),
           value: Array.from(arguments)
         });
-        // Function.prototype.apply.call(console.log, console, arguments);
         original.apply(console, arguments);
       }
     }
@@ -730,6 +731,7 @@ function sanitize_aoe_shape(shape){
             shape = "square";
             break;
         case "sphere":
+        case "emanation":
             shape = "circle";
             break;
         case "cylinder":
@@ -787,20 +789,45 @@ function add_aoe_to_statblock(html){
        
   })
 }
-
+async function embedDDBSection(target){
+  const ddbSections = target.find('.journal-ddb-section-embed')
+  const promises = [];
+  for(let i = 0; i<ddbSections.length; i++){
+    const $section = $(ddbSections[i]);
+    let url = $section.text().replaceAll("’", "'");
+    if(!url.includes('dndbeyond.com/sources'))
+      continue;
+    const promise = new Promise((resolve, reject) => { 
+      fetch_tooltip_immediate([undefined, url], url, (tooltip)=>{
+        resolve(tooltip);
+      });
+    });
+    const tooltip = await promise;
+    const html = $(tooltip.Tooltip).find('.tooltip-body>div:first-of-type');
+    $section.replaceWith(html);
+  }
+  return true;
+}
 function add_aoe_statblock_click(target, tokenId = undefined){
   target.find(`button.avtt-aoe-button`).off('click.aoe').on('click.aoe', function(e) {
     e.stopPropagation();
     const color = $(this).attr('data-style');
-    const shape = $(this).attr('data-shape');
-    const feet = $(this).attr('data-size');
+    let shape = $(this).attr('data-shape')
+    let feet = $(this).attr('data-size');
     const name = $(this).attr('data-name');
     const lineWidth = $(this).attr('data-line-width');
+
+
 
     if(is_abovevtt_page() || window.self != window.top){
       window.top.hide_player_sheet();
       window.top.minimize_player_sheet();
-
+      const circleIsSquare = window.top.get_avtt_setting_value('circleIsSquare');
+      shape = window.top.sanitize_aoe_shape(shape);
+      if(circleIsSquare && shape == 'circle'){
+        shape = 'square';
+        feet *= 2;
+      }
 
       let options = window.top.build_aoe_token_options(color, shape, feet / window.top.CURRENT_SCENE_DATA.fpsq, name, lineWidth / window.top.CURRENT_SCENE_DATA.fpsq)
       if(name == 'Darkness' || name == 'Maddening Darkness' ){
@@ -830,7 +857,7 @@ function add_aoe_statblock_click(target, tokenId = undefined){
   })
 }
 function create_update_token(options, save = true) {
-  console.log("create_update_token");
+  noisy_log("create_update_token");
   let self = this;
   let id = options.id;
   options.scaleCreated = window.CURRENT_SCENE_DATA.scale_factor;
@@ -857,8 +884,28 @@ function create_update_token(options, save = true) {
   }
 
 }
+/** Logs that are super noisy should be sent through here.
+ * This allows us to enable these logs on the fly when we need to debug things that would otherwise flood the console 
+ * @param message the args of the console log 
+ * iIf the first value is a number it will only display that log if window.enableNoiseLogs is >= to that number
+ * 
+ * 0: important debugging logs but not needed for logs sent from users
+ * 
+ * 4: Very spamy logs, often mouse move events
+ * */
+function noisy_log(...message) {
+  if(window.enableNoisyLogs==undefined) return;
+  const level = parseInt(message[0]);
+  if(!isNaN(level)){
+    message.shift();
+    if(window.enableNoisyLogs >= level) 
+      console.debug(...message);
+    return;
+  }
+  console.debug(...message); 
+}
+
 function add_journal_roll_buttons(target, tokenId=undefined, specificImage=undefined, specificName=undefined){
-  console.group("add_journal_roll_buttons")
   
   let pastedButtons = target.find('.avtt-roll-button, .integrated-dice__container, .avtt-aoe-button');
 
@@ -889,14 +936,14 @@ function add_journal_roll_buttons(target, tokenId=undefined, specificImage=undef
   // to account for all the nuances of DNDB dice notation.
   // numbers can be swapped for any number in the following comment
   // matches "1d10", " 1d10 ", "1d10+1", " 1d10+1 ", "1d10 + 1" " 1d10 + 1 "
-  const strongRoll = /(<strong>)(([0-9]+d[0-9]+)\s?([+-]\s?[0-9]+)?)(<\/strong>)/gi
-  const damageRollRegexBracket = /(\()(([0-9]+d[0-9]+)\s?([+-]\s?[0-9]+)?)(\))/gi
-  const damageRollRegex = /([:\s>]|^)(([0-9]+d[0-9]+)\s?([+-]\s?[0-9]+)?)([\.\):\s<,]|$)/gi
+  const strongRoll = /\s*(<strong>)(([0-9]+d[0-9]+)\s?([+-]\s?[0-9]+)?)(<\/strong>)/gi
+  const damageRollRegexBracket = /\s*(\()(([0-9]+d[0-9]+)\s?([+-]\s?[0-9]+)?)(\))/gi
+  const damageRollRegex = /\s*([:\s>]|^)(([0-9]+d[0-9]+)\s?([+-]\s?[0-9]+)?)([\.\):\s<,]|$)/gi
   // matches " +1 " or " + 1 "
-  const hitRollRegexBracket = /(?<![0-9]+d[0-9]+)(\()([+-]\s?[0-9]+)(\))/gi
-  const hitRollRegex = /(?<![0-9]+d[0-9]+)([:\s>]|^)([+-]\s?[0-9]+)([:\s<,]|$)/gi
-  const dRollRegex = /([\s>]|^)(\s?d[0-9]+)([^+-])/gi
-  const rechargeRegEx = /(Recharge [0-6]?\s?[—–-]?\s?[0-6])/gi
+  const hitRollRegexBracket = /\s*(?<![0-9]+d[0-9]+)(\()([+-]\s?[0-9]+)(\))/gi
+  const hitRollRegex = /\s*(?<![0-9]+d[0-9]+)([:\s>]|^)([+-]\s?[0-9]+)([:\s<,]|$)/gi
+  const dRollRegex = /\s*([\s>]|^)(\s?d[0-9]+)([^+-])/gi
+  const rechargeRegEx = /\s*(Recharge [0-6]?\s?[—–-]?\s?[0-6])/gi
   const actionType = "roll"
   const rollType = "AboveVTT"
   let updated = currentElement.html()
@@ -910,43 +957,69 @@ function add_journal_roll_buttons(target, tokenId=undefined, specificImage=undef
     .replaceAll(rechargeRegEx, `<button data-exp='1d6' data-mod='' data-rolltype='recharge' data-actiontype='Recharge' class='avtt-roll-button' title='${actionType}'>$1</button>`)
 
   updated = add_aoe_to_statblock(updated);
-
-  
+      
   let ignoreFormatting = $(currentElement).find('.ignore-abovevtt-formating');
 
   let slashCommandElements = $(currentElement).find('.abovevtt-slash-command-journal')
 
   let $newHTML = $(`<div></div>`).html(updated);
-    $newHTML.find('.ignore-abovevtt-formating').each(function(index){
-      $(this).empty().append(ignoreFormatting[index].innerHTML);
-    })
+  $newHTML.find('.ignore-abovevtt-formating').each(function(index){
+    $(this).empty().append(ignoreFormatting[index].innerHTML);
+  })
 
-    $newHTML.find('.abovevtt-slash-command-journal').each(function(index){      
-      const slashCommands = [...slashCommandElements[index].innerHTML.matchAll(multiDiceRollCommandRegex)];
-      if (slashCommands.length === 0) return;
-      console.debug("inject_dice_roll slashCommands", slashCommands);
-      let updatedInnerHtml = slashCommandElements[index].innerHTML;
-      try {
-        slashCommands[0][0] = slashCommands[0][0].replace(/\(|\)/ig, '');
-        const diceRoll = DiceRoll.fromSlashCommand(slashCommands[0][0], window.PLAYER_NAME, window.PLAYER_IMG, "character", window.PLAYER_ID); // TODO: add gamelog_send_to_text() once that's available on the characters page without avtt running
-        updatedInnerHtml = updatedInnerHtml.replace(updatedInnerHtml, `<button class='avtt-roll-formula-button integrated-dice__container' title="${diceRoll.action?.toUpperCase() ?? "CUSTOM"}: ${diceRoll.rollType?.toUpperCase() ?? "ROLL"}" data-slash-command="${slashCommands[0][0]}">${diceRoll.expression}</button>`);
-      } catch (error) {
-        console.warn("inject_dice_roll failed to parse slash command. Removing the command to avoid infinite loop", slashCommands, slashCommands[0][0]);
-        updatedInnerHtml = updatedInnerHtml.replace(updatedInnerHtml, '');
-      }
-      $(this).empty().append(updatedInnerHtml);
-    })
-
-  
-  
-  
-
-
-  $(target).html($newHTML[0].innerHTML);
-
+  $newHTML.find('.abovevtt-slash-command-journal').each(function(index){      
+    const slashCommands = [...slashCommandElements[index].innerHTML.matchAll(multiDiceRollCommandRegex)];
+    if (slashCommands.length === 0) return;
+    noisy_log("inject_dice_roll slashCommands", slashCommands);
+    let updatedInnerHtml = slashCommandElements[index].innerHTML;
+    try {
+      slashCommands[0][0] = slashCommands[0][0].replace(/\(|\)/ig, '');
+      const diceRoll = DiceRoll.fromSlashCommand(slashCommands[0][0], window.PLAYER_NAME, window.PLAYER_IMG, "character", window.PLAYER_ID); // TODO: add gamelog_send_to_text() once that's available on the characters page without avtt running
+      updatedInnerHtml = updatedInnerHtml.replace(updatedInnerHtml, `<button class='avtt-roll-formula-button integrated-dice__container' title="${diceRoll.action?.toUpperCase() ?? "CUSTOM"}: ${diceRoll.rollType?.toUpperCase() ?? "ROLL"}" data-slash-command="${slashCommands[0][0]?.replace(/[><\s]+$|^[<>\s]+/gi, '')}">${diceRoll.expression}</button>`);
+    } catch (error) {
+      console.warn("inject_dice_roll failed to parse slash command. Removing the command to avoid infinite loop", slashCommands, slashCommands[0][0]);
+      updatedInnerHtml = updatedInnerHtml.replace(updatedInnerHtml, '');
+    }
+    $(this).empty().append(updatedInnerHtml);
+  })
 
   
-  $(target).find('button.avtt-roll-button[data-rolltype]').each(function(){
+  
+  let $currTarget = $(target) 
+  const sidebar = $currTarget.closest('.ct-sidebar__inner');
+  if(sidebar.length>0 && sidebar.find(`[class*='styles_gameLogPane']`).length == 0){
+    
+    const currentTargetClone = $currTarget.clone(true, true);
+    currentTargetClone.show(); // incase of edits
+    $currTarget.hide();
+    $currTarget.before(currentTargetClone);
+    currentTargetClone.find(`[style*='display: none']`).remove();
+
+    //observer to see if original data edited
+    const observer = new MutationObserver((mutationsList) => {
+        observer.disconnect();
+        currentTargetClone.remove();
+        mutationsList.every(mutation =>{
+          $(mutation.target).closest('.above-vtt-visited').removeClass('above-vtt-visited');
+        }) 
+    });
+
+    
+    observer.observe($(target)[0], { characterData: true, subtree: true })
+    target = currentTargetClone;
+    $currTarget = $(target);
+    add_aoe_statblock_click($currTarget, tokenId);
+  } 
+  
+  $currTarget.html($newHTML[0].innerHTML);
+  $currTarget.find('.above-vtt-visited[style*="display: none"]').remove();
+
+
+ 
+
+
+  
+  $currTarget.find('button.avtt-roll-button[data-rolltype]').each(function(){
     const targetButton = $(this);
     let rollAction = targetButton.prevUntil('em>strong').find('strong').last().text().replace('.', '');
     rollAction = (rollAction == '') ? targetButton.prev('strong').last().text().replace('.', '') : rollAction;
@@ -972,7 +1045,40 @@ function add_journal_roll_buttons(target, tokenId=undefined, specificImage=undef
     else if(targetButton.closest('.ability-block__stat, [class*="styles_stat__"]')?.find('.ability-block__heading, [class*="styles_statHeading"]').length>0){
       rollAction = targetButton.closest('.ability-block__stat, [class*="styles_stat__"]')?.find('.ability-block__heading, [class*="styles_statHeading"]').text();
       rollType = 'Check'
-    } 
+    } else if(targetButton.closest('.dnd-sheet .abilities-table-container').length>0){
+      if(targetButton.closest('td').length>0){
+        const columnIndex = targetButton.closest('td')[0].cellIndex;
+        rollAction = targetButton.closest('tr').find('td').first().text();
+        rollType = columnIndex == 2 ? 'Save' : 'Check';
+      }
+    } else if(targetButton.closest('.dnd-sheet .skills-box').length>0){
+      if(targetButton.closest('td').length>0){
+        rollAction = `${targetButton.closest('tr').find('td:nth-last-child(2)').text()} (${targetButton.closest('tr').find('td:last').text()})`;
+        rollType = 'Check'
+      }
+    } else if(targetButton.closest('.dnd-sheet .combat-metric').length>0){
+      rollAction = targetButton.closest('.dnd-sheet .combat-metric').find('.label').text();
+      rollType = 'Roll'
+    } else if(targetButton.closest('.dnd-sheet .hp-box').length>0){
+      rollAction = targetButton.closest('.box-field').parent().find('.label').text();
+      rollType = 'Roll'
+    } else if(targetButton.closest('.dnd-sheet .attacks-field').length>0){
+      if(targetButton.closest('td').length>0){
+        const columnIndex = targetButton.closest('td')[0].cellIndex; 
+        rollAction = targetButton.closest('tr').find('td').first().text();
+        if(columnIndex == 1){ 
+          rollType = 'To Hit';
+        }else if(columnIndex == 2){
+          rollType = 'Damage';
+          let saveText = targetButton.closest('td').prev('td').text();
+          const regex = /\D*(\d+)\s+(CON|INT|WIS|CHA|DEX|STR).*|.*(CON|INT|WIS|CHA|DEX|STR)\s+(\d+)\D*/i
+          if(saveText.match(regex)){
+            saveText = saveText.replace(regex, '$2$3 $1$4').trim();
+            if(saveText != undefined) targetButton.attr('data-save', saveText);
+          }
+        }
+      }
+    }
 
     if (rollAction == '' || rollAction == undefined){
       rollAction = 'Roll';
@@ -999,15 +1105,17 @@ function add_journal_roll_buttons(target, tokenId=undefined, specificImage=undef
       rollType = 'Roll';
     }
     
-    targetButton.attr('data-actiontype', rollAction);
-    targetButton.attr('data-rolltype', rollType);
-
     const followingText = targetButton[0].nextSibling?.textContent?.trim()?.split(' ')[0]
     
     const damageType = followingText && window.ddbConfigJson?.damageTypes?.some(d => d.name.toLowerCase() == followingText.toLowerCase()) ? followingText : undefined
     if(damageType != undefined){
       targetButton.attr('data-damagetype', damageType);
     }
+    if(followingText && followingText.toLowerCase().match(/^\s*heal(ing)?/i)) rollType = 'Heal';
+    targetButton.attr('data-actiontype', rollAction);
+    targetButton.attr('data-rolltype', rollType);
+    
+   
   })
 
   const tokenName = window.all_token_objects && window.all_token_objects[tokenId]?.options?.name ? window.all_token_objects[tokenId]?.options?.name  : window.PLAYER_NAME
@@ -1017,11 +1125,11 @@ function add_journal_roll_buttons(target, tokenId=undefined, specificImage=undef
   // terminate the clones reference, overkill but rather be safe when it comes to memory
   currentElement = null;
 
-  $(target).find(".avtt-roll-button").click(clickHandler);
-  $(target).find(".avtt-roll-button").on("contextmenu", rightClickHandler);
+  $currTarget.find(".avtt-roll-button").click(clickHandler);
+  $currTarget.find(".avtt-roll-button").on("contextmenu", rightClickHandler);
 
-  $(target).find("button.avtt-roll-formula-button").off('click.avttRoll').on('click.avttRoll', function(clickEvent) {
-  clickEvent.stopPropagation();
+  $currTarget.find("button.avtt-roll-formula-button").off('click.avttRoll').on('click.avttRoll', function(clickEvent) {
+    clickEvent.stopPropagation();
 
     const slashCommand = $(clickEvent.currentTarget).attr("data-slash-command");
     const followingText = $(clickEvent.currentTarget)[0].nextSibling?.textContent?.trim()?.split(' ')[0]
@@ -1029,7 +1137,7 @@ function add_journal_roll_buttons(target, tokenId=undefined, specificImage=undef
     const diceRoll = DiceRoll.fromSlashCommand(slashCommand, tokenName, tokenImage, entityType, tokenId, damageType); // TODO: add gamelog_send_to_text() once that's available on the characters page without avtt running
     window.diceRoller.roll(diceRoll, undefined, undefined, undefined, undefined, damageType);
   });
-  $(target).find(`button.avtt-roll-formula-button`).off('contextmenu.rpg-roller').on('contextmenu.rpg-roller', function(e){
+  $currTarget.find(`button.avtt-roll-formula-button`).off('contextmenu.rpg-roller').on('contextmenu.rpg-roller', function(e){
     e.stopPropagation();
     e.preventDefault();
     let rollData = {}
@@ -1082,7 +1190,7 @@ function notify_player_join() {
     pc: read_pc_object_from_character_sheet(window.PLAYER_ID)
   };
 
-  console.log("Sending playerjoin msg, abovevtt version: " + playerdata.abovevtt_version + ", sheet ID:" + window.PLAYER_ID);
+  noisy_log("Sending playerjoin msg, abovevtt version: " + playerdata.abovevtt_version + ", sheet ID:" + window.PLAYER_ID);
   whenAvailable('JOURNAL', function () { window.MB.sendMessage("custom/myVTT/playerjoin", playerdata) });
 }
 
@@ -1285,6 +1393,7 @@ function inject_dice(){
   if(window.encounterObserver){
     window.encounterObserver.disconnect();
   }
+
   window.encounterObserver = new MutationObserver(function(mutationList, observer) {
 
     mutationList.forEach(mutation => {
@@ -1410,11 +1519,11 @@ var MYCOBALT_TOKEN_EXPIRATION = 0;
  */
 function get_cobalt_token(callback) {
   if (Date.now() < MYCOBALT_TOKEN_EXPIRATION) {
-    console.log("TOKEN IS CACHED");
+    noisy_log("TOKEN IS CACHED");
     callback(MYCOBALT_TOKEN);
     return;
   }
-  console.log("GETTING NEW TOKEN");
+  noisy_log("GETTING NEW TOKEN");
   $.ajax({
     url: "https://auth-service.dndbeyond.com/v1/cobalt-token",
     type: "post",
@@ -1423,7 +1532,7 @@ function get_cobalt_token(callback) {
       withCredentials: true
     },
     success: function(data) {
-      console.log("GOT NEW TOKEN");
+      noisy_log("GOT NEW TOKEN");
       MYCOBALT_TOKEN = data.token;
       MYCOBALT_TOKEN_EXPIRATION = Date.now() + (data.ttl * 1000) - 10000;
       callback(data.token);
@@ -1503,6 +1612,7 @@ function showErrorMessage(error, ...extraInfo) {
   }
 
   const stack = error.stack || new Error().stack;
+  error.doNotRelog = true;
   console.error(error, ...extraInfo);
   if(stack.includes('Internal Server Error') && stack.includes('AboveApi.getScene')){
     if(!window.DM){
@@ -1559,7 +1669,38 @@ function showErrorMessage(error, ...extraInfo) {
     $("#error-message-stack").show();
   }
 }
-
+function showHardwareAccelWarning(){
+  if (localStorage.getItem("HardwareAccelWarningDismissed") === "true") 
+    return;
+  let canvas = document.createElement('canvas');
+  if(!!(canvas?.getContext("webgl", {failIfMajorPerformanceCaveat: true}) || canvas?.getContext("experimental-webgl", {failIfMajorPerformanceCaveat: true}))){
+    canvas = null;
+    return;
+  }
+  $("#above-vtt-error-message").remove();
+  const container = $(`
+    <div id="above-vtt-error-message">
+      <h2>Hardware Acceleration is not detected</h2>
+      <div id="error-message-details">
+        <p>It is recommended to enable hardware acceleration in your browser settings then restart your browser.</p>
+      </div>
+      <label style="display:flex;align-items:center;margin-top:0.75rem;cursor:pointer;">
+        <input id="hardware-accel-warning-hide" type="checkbox" style="margin-right:0.5rem;">
+        Do not show again
+      </label>
+      <div class="error-message-buttons">
+        <button id="close-error-button">Close</button>
+      </div>
+    </div>
+  `);
+  $(document.body).append(container);
+  $("#close-error-button").off().on("click", () => {
+    if ($("#hardware-accel-warning-hide").is(":checked")) {
+      localStorage.setItem("HardwareAccelWarningDismissed", "true");
+    }
+    removeError();
+  });
+}
 function showDiceDisabledWarning(){
   window.diceWarning = 1;
   let container = $("#above-vtt-error-message");
@@ -1622,7 +1763,7 @@ function showError(error, ...extraInfo) {
       add_issues_to_error_message(issues, error.message);
     })
     .catch(githubError => {
-      console.log("look_for_github_issue", "Failed to look for github issues", githubError);
+      noisy_log("look_for_github_issue", "Failed to look for github issues", githubError);
     });
   remove_loading_overlay();
 }
@@ -1682,7 +1823,7 @@ function add_issues_to_error_message(issues, errorMessage) {
         browser: get_browser(),
       });
       const errorBody = build_external_error_message(true);
-      console.log("look_for_github_issue", `appending createIssueUrl`, errorMessage, errorBody);
+      noisy_log("look_for_github_issue", `appending createIssueUrl`, errorMessage, errorBody);
       open_github_issue(errorMessage, errorBody);
     });
     $("#above-vtt-error-message .error-message-buttons").append(githubButton);
@@ -1984,7 +2125,7 @@ function update_pc_with_data(playerId, data) {
     console.warn("update_pc_with_data could not find pc with id", playerId);
     return;
   }
-  console.debug(`update_pc_with_data is updating ${playerId} with`, data);
+  noisy_log(`update_pc_with_data is updating ${playerId} with`, data);
   const pc = window.pcs[index];
   window.pcs[index] = {
     ...pc,
@@ -2047,20 +2188,20 @@ const debounce_pc_token_update = mydebounce(() => {
 
 function update_pc_with_api_call(playerId) {
   if (!playerId) {
-    console.log('update_pc_with_api_call was called without a playerId');
+    noisy_log('update_pc_with_api_call was called without a playerId');
     return;
   }
   if (window.PC_TOKENS_NEEDING_UPDATES.includes(playerId)) {
-    console.log(`update_pc_with_api_call isn't adding ${playerId} because we're already waiting for debounce_pc_token_update to handle it`);
+    noisy_log(`update_pc_with_api_call isn't adding ${playerId} because we're already waiting for debounce_pc_token_update to handle it`);
   } else if (Object.keys(window.PC_NEEDS_API_CALL).includes(playerId)) {
-    console.log(`update_pc_with_api_call is already waiting planning to call the API to fetch ${playerId}. Nothing to do right now.`);
+    noisy_log(`update_pc_with_api_call is already waiting planning to call the API to fetch ${playerId}. Nothing to do right now.`);
   } else {
     const pc = find_pc_by_player_id(playerId, false);
     const twoSecondsAgo = new Date(Date.now() - 2000).getTime();
     if (pc && pc.lastSynchronized && pc.lastSynchronized > twoSecondsAgo) {
-      console.log(`update_pc_with_api_call is not adding ${playerId} to window.PC_NEEDS_API_CALL because it has been updated within the last 2 seconds`);
+      noisy_log(`update_pc_with_api_call is not adding ${playerId} to window.PC_NEEDS_API_CALL because it has been updated within the last 2 seconds`);
     } else {
-      console.log(`update_pc_with_api_call is adding ${playerId} to window.PC_NEEDS_API_CALL`);
+      noisy_log(`update_pc_with_api_call is adding ${playerId} to window.PC_NEEDS_API_CALL`);
       window.PC_NEEDS_API_CALL[playerId] = Date.now();
     }
   }
@@ -2072,16 +2213,16 @@ const debounce_fetch_character_from_api = mydebounce(() => {
   const idsAndDates = { ...window.PC_NEEDS_API_CALL }; // make a copy so we can refer to it later
   window.PC_NEEDS_API_CALL = {}; // clear it out in case we get new updates while the API call is active
   const characterIds = Object.keys(idsAndDates);
-  console.log('debounce_fetch_character_from_api is about to call DDBApi before update_pc_with_data for ', characterIds);
+  noisy_log('debounce_fetch_character_from_api is about to call DDBApi before update_pc_with_data for ', characterIds);
   DDBApi.fetchCharacterDetails(characterIds).then((characterDataCollection) => {
     characterDataCollection.forEach((characterData) => {
       // check if we've synchronized this player data while the API call was active because we don't want to update the PC with stale data
       const lastSynchronized = find_pc_by_player_id(characterData.characterId, false)?.lastSynchronized;
       if (!lastSynchronized || lastSynchronized < idsAndDates[characterData.characterId]) {
-        console.log('debounce_fetch_character_from_api is about to call update_pc_with_data with', characterData.characterId, characterData);
+        noisy_log('debounce_fetch_character_from_api is about to call update_pc_with_data with', characterData.characterId, characterData);
         update_pc_with_data(characterData.characterId, characterData);
       } else {
-        console.log(`debounce_fetch_character_from_api is not calling update_pc_with_data for ${characterData.characterId} because ${lastSynchronized} < ${idsAndDates[characterData.characterId]}`);
+        noisy_log(`debounce_fetch_character_from_api is not calling update_pc_with_data for ${characterData.characterId} because ${lastSynchronized} < ${idsAndDates[characterData.characterId]}`);
       }
     });
   });
@@ -2090,7 +2231,7 @@ const debounce_fetch_character_from_api = mydebounce(() => {
 async function harvest_game_id() {
   if (is_campaign_page()) {
     const fromPath = window.location.pathname.split("/").pop();
-    console.log("harvest_game_id found gameId in the url:", fromPath);
+    noisy_log("harvest_game_id found gameId in the url:", fromPath);
     return fromPath;
   }
 
@@ -2169,7 +2310,7 @@ async function harvest_campaign_secret() {
 
   const secretFromLocalStorage = read_campaign_info(window.gameId);
   if (typeof secretFromLocalStorage === "string" && secretFromLocalStorage.length > 0) {
-    console.log("harvest_campaign_secret found it in localStorage");
+    noisy_log("harvest_campaign_secret found it in localStorage");
     return secretFromLocalStorage;
   }
 
@@ -2225,7 +2366,7 @@ async function harvest_campaign_secret() {
         try {
           const joinLink = $(event.target).contents().find(".ddb-campaigns-invite-primary").text().split("/").pop();
           if (typeof joinLink === "string" && joinLink.length > 0) {
-            console.log("harvest_campaign_secret found it by loading the campaign page in an iframe");
+            noisy_log("harvest_campaign_secret found it by loading the campaign page in an iframe");
             finish(joinLink);
           } else if (attempts >= maxAttempts) {
             console.warn("harvest_campaign_secret: campaign join link not populated in iframe after polling");
@@ -2341,10 +2482,45 @@ function find_game_id() {
     }
   }
 
-  console.log("find_game_id found:", window.gameId);
+  noisy_log("find_game_id found:", window.gameId);
   return window.gameId;
 }
+function parse_img(url) {
+	if (typeof url !== "string") {
+		noisy_log("parse_img is converting", url, "to an empty string");
+		return "";
+	}
+	let retval = url.trim();
+	if (retval.startsWith("data:")) {
+		console.warn("parse_img is removing a data url because those are not allowed"); 
+		return "";
+	}
+	if (retval.includes("https://drive.google.com") || retval.includes("https://drive.usercontent.google.com")) {
+		const match = retval.match(GOOGLE_DRIVE_ID_REGEX);
+		if (match) {
+			return `https://drive.google.com/thumbnail?id=${match[1]}&sz=w3000`;
+		} else if (retval.includes("https://drive.google.com")) {
+			// Fallback: split by '/' to get ID
+			return `https://drive.google.com/thumbnail?id=${retval.split('/')[5]}&sz=w3000`;
+		}
+	} else if (retval.startsWith("https://www.googleapis.com/drive/v3/files/")) {
+		const fileid = retval.split('files/')[1].split('?')[0];
+		return `https://drive.google.com/thumbnail?id=${fileid}&sz=w3000`;
+	} else if (retval.includes("dropbox.com")) {
+		const splitUrl = url.split('dropbox.com');
+		return `https://dl.dropboxusercontent.com${splitUrl[splitUrl.length - 1]}`;
+	} else if (retval.includes("https://1drv.ms/")) {
+		if (retval.split('/')[4].length !== 1) {
+			return `https://api.onedrive.com/v1.0/shares/u!${btoa(url)}/root/content`;
+		}
+		return retval;
+	}
+	if (retval.includes("discordapp.com")) {
+		return update_old_discord_link(retval);
+	}
 
+	return retval;	
+}
 async function normalize_scene_urls(scenes) {
   if (!Array.isArray(scenes) || scenes.length === 0) {
     return [];
@@ -2355,6 +2531,7 @@ async function normalize_scene_urls(scenes) {
       if (sceneData?.itemType === ItemType.Folder) {
         return sceneData;
       }
+      delete sceneData.map;
       return Object.assign(sceneData, {
         dm_map: await parse_img(sceneData.dm_map),
         player_map: await parse_img(sceneData.player_map),
@@ -2367,37 +2544,79 @@ async function normalize_scene_urls(scenes) {
 async function getAvttStorageUrl(url, highPriority = false){
   return await getFileFromS3(url.replace('above-bucket-not-a-url/', ''), highPriority);
 }
-async function updateImgSrc(url, container, video, highPriority = true, callback = () =>{}){
-  if(video == true && url?.includes('onedrive')){
-    container.attr('src', url.replace('embed?', 'download?'));
-  }
-  else if(url.includes("https://1drv.ms/"))
-  {
-    if(url.split('/')[4].length == 1){
-      url = url;
-    }
-    else{
-      url = "https://api.onedrive.com/v1.0/shares/u!" + btoa(url) + "/root/content";
-    }
-    container.attr('src', url);
+async function updateImgSrc(url, container, video, highPriority = true, callback){
+  
+ 
+    const handleIntersection = (entries, observer) => {
+      entries.forEach(async (entry) => {
+        if (!entry.isIntersecting)  return;
+        
+        const state = window.updateImageState.get(entry.target);
+        if(!state) return;
 
-  }
-  else if(url?.includes('google')){
-    throttleImgSrc(() => {
-      container.attr('src', parse_img(url));
-    })
-  }
-  else if(url.startsWith('above-bucket-not-a-url'))
-  {
-    url = await getAvttStorageUrl(url, highPriority)
-    container.attr('src', url);
-    callback();
-  }
-  else{
-    url = parse_img(url);
-    container.attr('src', url);
-  }
+        const targetContainer = $(entry.target);
+        let url = state.url;
+
+          if(video == true && url?.includes('onedrive')){
+            targetContainer.attr('src', url.replace('embed?', 'download?'));
+          }
+          else if(url.includes("https://1drv.ms/"))
+          {
+            if(url.split('/')[4].length == 1){
+              url = url;
+            }
+            else{
+              url = "https://api.onedrive.com/v1.0/shares/u!" + btoa(url) + "/root/content";
+            }
+            targetContainer.attr('src', url);
+
+          }
+          else if(url?.includes('google')){
+            throttleImgSrc(() => {
+              targetContainer.attr('src', parse_img(url));
+            })
+          }
+          else if(url.startsWith('above-bucket-not-a-url'))
+          {
+            url = await getAvttStorageUrl(url, true)
+            targetContainer.attr('src', url);
+            if (state.callback && !state.callbackFired) {
+              state.callbackFired = true;
+              state.callback();
+            }
+          }
+          else{
+            url = parse_img(url);
+            targetContainer.attr('src', url);
+          }
+        
+        observer.unobserve(entry.target);
+        window.updateImageState.delete(entry.target);
+        
+      });
+    };
+
+   
+    const options = {
+      root: null, // uses the default browser viewport
+      rootMargin: '200px 200px 200px 200px',
+      threshold: 0.1 // triggers when at least 10% of the image is visible
+    };
+
+    if(!window.inViewObserver)
+      window.inViewObserver = new IntersectionObserver(handleIntersection, options);
+    if(!window.updateImageState)
+      window.updateImageState = new WeakMap();
+
+    window.updateImageState.set(container[0], {
+      url,
+      callback,
+      callbackFired: false
+    });
+
+    window.inViewObserver.observe(container[0]);
 }
+
 async function updateTokenSrc(url, container, video=false){
   url = await parse_img(url)
   if(video == true && url?.includes('onedrive')){
@@ -2570,7 +2789,7 @@ async function look_for_github_issue(...searchTerms) {
  */
 function inject_sidebar_send_to_gamelog_button(sidebarPaneContent) {
   // we explicitly don't want this to happen in `.ct-game-log-pane` because otherwise it will happen to the injected gamelog messages that we're trying to send here
-  console.log("inject_sidebar_send_to_gamelog_button")
+  noisy_log("inject_sidebar_send_to_gamelog_button")
   let button = $(`<button id='castbutton'">SEND TO GAMELOG</button>`);
   // button.css({
   //  "margin": "10px 0px",
@@ -2810,7 +3029,7 @@ function add_items_to_party_inventory(items = []) {
   }
 
   DDBApi.addItemsToPartyInventory(data).then(response => {
-    console.log('add_items_to_party_inventory response:', response);
+    noisy_log('add_items_to_party_inventory response:', response);
     window.partyInventoryQueue.onResponseReceived();
   }).catch(error => {
     console.error('add_items_to_party_inventory error:', error);
@@ -2850,7 +3069,7 @@ function add_custom_item_to_party_inventory(item) {
   
 
   DDBApi.addCustomItemToPartyInventory(data).then(response => {
-    console.log('add_custom_item_to_party_inventory response:', response);
+    noisy_log('add_custom_item_to_party_inventory response:', response);
     window.partyInventoryQueue.onResponseReceived();
   }).catch(error => {
     console.error('add_custom_item_to_party_inventory error:', error);
@@ -2867,7 +3086,7 @@ function add_currency_to_party_inventory(currency = {cp:0,sp:0,gp:0,ep:0,pp:0}) 
 
 
   DDBApi.addCurrenciesToPartyInventory(data).then(response => {
-    console.log('add_currency_to_party_inventory response:', response);
+    noisy_log('add_currency_to_party_inventory response:', response);
     window.partyInventoryQueue.onResponseReceived();
   }).catch(error => {
     console.error('add_currency_to_party_inventory error:', error);
@@ -2878,7 +3097,7 @@ function add_currency_to_party_inventory(currency = {cp:0,sp:0,gp:0,ep:0,pp:0}) 
 async function fetch_github_issue_comments(issueNumber) {
   const request = await fetch("https://api.github.com/repos/cyruzzo/AboveVTT/issues?labels=bug", { credentials: "omit" });
   const response = await request.json();
-  console.log(response);
+  noisy_log(response);
   return response;
 }
 
@@ -2889,7 +3108,7 @@ function open_github_issue(title, body) {
 
 function display_url_embeded(url){
   const encodedUrl = encodeURIComponent(url);
-  const src = `${window.EXTENSION_PATH}iframe.html?src=${encodedUrl}`;
+  const src = `${window.EXTENSION_PATH}iframe.html?src=${encodedUrl.replace(/'/g, '%27')}`;
   const iframe = $(`<iframe id='embededFileFrame' data-src='${url}' src='${src}'></iframe>`);
   iframe.css({
     width: 'calc(100% + 2px)',
@@ -2939,6 +3158,11 @@ function createDialogMenu(rootId, options) {
   const contain = dialog.find('.js-popup-options')[0]
   options.map((opt) => dialogMenuOption(rootId, contain, opt));
   return dialog[0]; //note: return native element, NOT jquery
+}
+function basic_sanitize_html(html){
+  let sanitized = DOMPurify.sanitize(html,{ALLOWED_TAGS: ['video','img','div','p', 'b', 'button', 'span', 'path', 'polygon', 'rect', 'svg', 'circle', 'a', 'hr', 'ul', 'li', 'ol', 'h3', 'h2', 'h4', 'h1', 'table', 'thead', 'tbody', 'tr', 'td', 'th', 'br', 'input', 'strong', 'em'], ADD_ATTR: ['target', 'contenteditable']}); //This array needs to include all HTML elements the extension sends via chat.
+  sanitized = sanitized.replace(/(\n\s{2,})+(<)|(>)(\n\s{2,})+|(\s{2,}\n)+(<)|(>)(\s{2,}\n)+/gi, '$2$3$6$7');
+  return sanitized;
 }
 
 //turn an element into a menu trigger
@@ -2997,7 +3221,7 @@ function addDialogCloser(element) {
 }
 
 function sendPopElement(element, whisper) {
-  const what = element.find(".magnify, .monster-image, video");
+  const what = element.find("img, video, .magnify, .monster-image");
   const src = what.find('source').length>0 ? what.find('source').attr('src') : what.attr("src");
   const video = what.prop('nodeName') === 'VIDEO';  
   if(src) {
@@ -3080,7 +3304,7 @@ function createSendPlayerButton(parent, icon, hasPopupOption=false ) {
 //-end- dialog menus 
 
 function find_or_create_generic_draggable_window(id, titleBarText, addLoadingIndicator = true, addPopoutButton = false, popoutSelector=``, width='80%', height='80%', top='10%', left='10%', showSlow = true, cancelClasses='', hideOnX = false, alwaysDisplayTitle = false, onCloseCallback = () => {}) {
-  console.log(`find_or_create_generic_draggable_window id: ${id}, titleBarText: ${titleBarText}, addLoadingIndicator: ${addLoadingIndicator}, addPopoutButton: ${addPopoutButton}`);
+  noisy_log(`find_or_create_generic_draggable_window id: ${id}, titleBarText: ${titleBarText}, addLoadingIndicator: ${addLoadingIndicator}, addPopoutButton: ${addPopoutButton}`);
 
   const existing = $(`[id="${id.replace('#', '')}"]`);
   if (existing.length > 0) {
