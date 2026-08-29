@@ -78,21 +78,27 @@ $(function() {
           }
         }
         window.AVTT_CAMPAIGN_INFO = await AboveApi.getCampaignData();
+        
         return window.CAMPAIGN_INFO.dmId;
       })
       .then(async (campaignDmId) => {
+        startup_step("Fetching PCs")
+        await rebuild_window_pcs();
         startup_step("Fetching Party Inventory/Items/Spells")
-        await Promise.all([
-          DDBApi.debounceGetPartyInventory(),
-          DDBApi.fetchSpellsJsonWithToken(),
-          DDBApi.fetchItemsJsonWithToken()
-        ]);
-
+        try{
+          await Promise.all([
+            DDBApi.debounceGetPartyInventory(),
+            DDBApi.fetchSpellsJsonWithToken(),
+            DDBApi.fetchItemsJsonWithToken()
+          ]);
+        } catch (error) {
+          console.warn(`Failed to fetch party inventory/items/spells`, error)
+        }
         const isDmPage = is_encounters_page();
         const isSpectator = is_spectator_page();
         const userId = $(`#message-broker-client[data-userid]`)?.attr('data-userid') || Cobalt?.User?.ID;
         if ((isDmPage && campaignDmId == userId) || isSpectator) {
-          inject_dice();
+          add_new_dice();
         }
         return { campaignDmId, userId, isDmPage, isSpectator };
       })
@@ -118,6 +124,7 @@ $(function() {
           throw new Error(`Invalid AboveVTT page: ${window.location.href}`)
         }
       }).then(()=>{
+        refresh_aoe_style_menu();
         addExtensionPathStyles();
         $('body').append(`<script type="text/javascript" src="https://www.dropbox.com/static/api/2/dropins.js" id="dropboxjs" data-app-key="h3iaoazdu0wqrfd"></script>`)
       }).then(() => {     
@@ -132,12 +139,7 @@ $(function() {
         $('body').toggleClass('reduceMovement', (window.EXPERIMENTAL_SETTINGS['reduceMovement'] == true));
         $('body').toggleClass('mobileAVTTUI', (window.EXPERIMENTAL_SETTINGS['iconUi'] != false));
         $('body').toggleClass('color-blind-avtt', (window.EXPERIMENTAL_SETTINGS['colorBlindText'] == true));
-          // STREAMING STUFF
 
-        window.STREAMPEERS = {};
-        window.MYSTREAMID = uuid();
-        window.JOINTHEDICESTREAM = window.EXPERIMENTAL_SETTINGS['streamDiceRolls'] == true;
-        enable_dice_streaming_feature(window.JOINTHEDICESTREAM);
 
         tabCommunicationChannel.addEventListener ('message', (event) => {
           if((event.data.msgType == 'addCondition' || event.data.msgType == 'removeCondition') && event.data.sendTo == window.PLAYER_ID){ // Sets a player token's condition on and off
@@ -478,7 +480,7 @@ async function start_above_vtt_common() {
   $("#site").append("<div id='windowContainment'></div>");
   $("body").append(`<style>.ddb-footer{display:none}</style>`);
   startup_step("Gathering player character data");
-  await rebuild_window_pcs();
+ 
   window.color = color_for_player_id(my_player_id()); // shortcut that we should figure out how to not rely on
   localStorage.removeItem(`CampaignCharacters${window.gameId}`); // clean up old pc data
 
@@ -760,14 +762,13 @@ function inject_dm_roll_default_menu(){
   })
 
 
-  $('.dice-rolling-panel').off('click.sendTo').on('click.sendTo', '.dice-toolbar__target>button:first-of-type', function(e){
-    window.modifiySendToDDBDiceClicked = true;
-  })
+
   //dm only css for campaign page use
   $('body').append(`
     <style>
       .glc-game-log .gameLogSendToMenu li div:last-of-type svg{
         visibility: hidden;
+        width:20px;
       }
       .glc-game-log .gameLogSendToMenu li.selected div:last-of-type svg{
         visibility: visible;
@@ -1166,9 +1167,7 @@ async function start_above_vtt_for_players() {
     debounceResizeUI();
     if(!window.CURRENT_SCENE_DATA.is_video || !window.CURRENT_SCENE_DATA.player_map.includes('youtu')){
       $("#youtube_controls_button").css('visibility', 'hidden');
-    }
-    add_dice_stream_gamelog_button()
-     
+    }     
   });
 
   /*prevents repainting due to ddb adjusting player sheet classes and throttling it*/

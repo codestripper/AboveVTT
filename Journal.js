@@ -1762,13 +1762,13 @@ class JournalManager{
 	* @param {Boolean|undefined} options.forceSave forces saving of the note even if no changes found in text
 	* @param {Boolean|undefined} options.rescanStatBlock reruns any autoformatting we do to statblocks */
 	persistStatBlockContent = (id, note_text, note_container, options = { tokenId: undefined, forceSave: false, rescanStatBlock: true }) => {
-		const currScroll = note_container.find('.avtt-stat-block-container, .note-text').first()[0].scrollTop;
 		const { tokenId, forceSave, rescanStatBlock } = options;
 		const closestNote = note_text.clone(true, true);
 		const avttImages = closestNote.find('img[data-src*="above-bucket-not-a-url"]');
 		avttImages.attr('src', '');
 		avttImages.attr('href', '');
 		closestNote.find('a:empty, button:empty, .add-table-row, .table-row-drag-handle, .header-spacer, .injected-input, .added-input-desc, .spell-tooltip>svg.ritual-icon-svg').remove();
+		closestNote.find('.dnd-sheet [contenteditable] div:not([class]):not([id]):empty').remove();
 		const noteButtons = closestNote.find('button');
 		noteButtons.replaceWith((i, innerHTML)=>{
 			const command = noteButtons[i].getAttribute('data-slash-command');
@@ -1794,6 +1794,9 @@ class JournalManager{
 			return innerHTML;
 		});
 		closestNote.find('.image').remove();
+		closestNote.find('[style=""]').removeAttr('style');
+  		closestNote.find('[class=""]').removeAttr('class');
+		closestNote.find('[data-avtt-suggestion-type]').removeAttr('data-avtt-suggestion-type');
 		let sanitizedHTML = basic_sanitize_html(closestNote[0].innerHTML).replaceAll(/\[(\/)?spell\]/gi, `[$1spell]`).replaceAll(/\[(\/)?magicitem\]/gi, `[$1magicItem]`).replaceAll(/\[(\/)?item\]/gi, `[$1item]`);
 		const changes = forceSave || $(sanitizedHTML).text().replace(/[\s\n\r]/gi, '') != this.notes[id].plain.replace(/[\s\n\r]/gi, '');
 		if(changes){
@@ -1812,7 +1815,7 @@ class JournalManager{
 			window.JOURNAL.setPersistTimeout();
 			debounceSendNote(id, this.notes[id], tokenId);
 			if(rescanStatBlock){
-				debounceRescanStatBlock(note_container, id, tokenId, currScroll);
+				debounceRescanStatBlock(note_container, id, tokenId);
 			}
 		}
 	};
@@ -1942,7 +1945,39 @@ class JournalManager{
 						});
 					}
 				}			
+				document.querySelectorAll('[contenteditable="true"]').forEach((el) => {
+					el.addEventListener('paste', (e) => {
+						e.preventDefault();
+						const text = (e.originalEvent?.clipboardData || e.clipboardData || window.clipboardData).getData('text/plain');
+						document.execCommand('insertText', false, text);
+					})
+				});
+				document.querySelectorAll('input').forEach((el) => {
+					el.addEventListener('input change', (e) => {
+						e.target.style.width = (e.target.value.length + 4) + 'ch';
+					});
+				});
+				document.addEventListener('keydown', (e) => {
+					if (e.key !== 'Enter' || e.defaultPrevented) return;
+					if (!e.target?.closest?.('[contenteditable="true"]')) return;
+					const selection = window.getSelection();
+					if (!selection || selection.rangeCount === 0) return;
+					// left to the browser this wraps the rest of the field in new divs, which rewrites the sheet's structure
+					e.preventDefault();
+					const range = selection.getRangeAt(0);
+					range.deleteContents();
+					const lineBreak = document.createElement('br');
+					range.insertNode(lineBreak);
+					if (lineBreak.nextSibling == null) {
+						lineBreak.parentNode.appendChild(document.createElement('br'));
+					}
+					range.setStartAfter(lineBreak);
+					range.collapse(true);
+					selection.removeAllRanges();
+					selection.addRange(range);
+				});
 				document.querySelectorAll('table').forEach((table) => {
+					
 					if (table.nextElementSibling?.classList.contains('add-table-row')) return;
 
 					const addTableRowButton = document.createElement('button');
@@ -1985,12 +2020,901 @@ class JournalManager{
 						profCheck.dataset.state = newState;
 					}
 				});
+
+				
+				function pcTemplateFocusTarget(sheetEl){
+					const targets = [];
+					sheetEl.querySelectorAll('td, th, [contenteditable]:not(a)').forEach((el) => {
+						if (el.classList.contains('table-row-drag-handle') || el.classList.contains('header-spacer') || el.classList.contains('add-table-row')) {
+							return;
+						}
+						if (el.offsetParent === null) {
+							return; // hidden
+						}
+						if (!el.isContentEditable) {
+							return;
+						}
+						if (el.matches('td, th')) {
+							targets.push(el);
+						} else {
+							if (el.closest('td, th')) {
+								return; 
+							}
+							targets.push(el);
+						}
+					});
+					return targets;
+				}
+
+				function placeCaretAtStart(el){
+					if (typeof el.focus === 'function') {
+						el.focus();
+					}
+					const range = document.createRange();
+					range.setStart(el, 0);
+					range.collapse(true);
+					const selection = window.getSelection();
+					selection.removeAllRanges();
+					selection.addRange(range);
+				}
+
+				document.addEventListener('keydown', (e) => {
+					if (e.key !== 'Tab') return;
+					const selection = window.getSelection();
+					if (!selection || selection.rangeCount === 0) return;
+					let anchorEl = selection.anchorNode;
+					if (anchorEl && anchorEl.nodeType === Node.TEXT_NODE) {
+						anchorEl = anchorEl.parentElement;
+					}
+					if (!anchorEl) return;
+					const sheet = anchorEl.closest('.dnd-sheet');
+					if (!sheet) return; 
+					const current = anchorEl.closest('td, th') || anchorEl.closest('[contenteditable]:not(a)');
+					if (!current) return;
+					const targets = pcTemplateFocusTarget(sheet);
+					const currentIndex = targets.indexOf(current);
+					if (currentIndex === -1) return;
+					const nextIndex = (currentIndex + (e.shiftKey ? -1 : 1) + targets.length) % targets.length;
+					e.preventDefault();
+					placeCaretAtStart(targets[nextIndex]);
+				});
 			</script>`;
 			download(html,`${window.CAMPAIGN_INFO.name}-${datetime}-pctemplate.html`,"text/html");
 				
 			$(".import-loading-indicator").remove();        
 		})
 	}
+	getNotePopoutName(id){
+		return this.notes[id].title.replace(/(\r\n|\n|\r)/gm, "").trim();
+	}
+	getDisplayedNoteText(noteContainer, noteText){
+		const currentNoteText = $(noteContainer).find('.avtt-stat-block-container, .note-text').first();
+		return currentNoteText.length > 0 ? currentNoteText : $(noteText);
+	}
+	bindDisplayedNoteEvents(id, note, note_text, note_container){
+		const self = this;
+		note.off('click').on('click', '.tooltip-hover[href*="https://www.dndbeyond.com/sources/dnd/"], .int_source_link ', function (event) {
+			event.preventDefault();
+			event.stopPropagation();
+			event.stopImmediatePropagation();
+			render_source_chapter_in_iframe(event.target.href);
+		});
+		self.bindDndSheetTemplateEvents(id, note_text, note_container);
+	}
+	getDndSheetCellSuggestionItems(suggestionType, searchText){
+		const normalize = (value) => `${value ?? ''}`.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().trim();
+		const removeSpecial = (value) => normalize(value).replace(/[^a-z0-9\s]/g, ' ').replace(/\s+/g, ' ').trim();
+		const normalizedSearch = normalize(searchText);
+		const normalizedSearchAlphanumeric = removeSpecial(searchText);
+		const searchHasSpecialChars = normalizedSearch !== normalizedSearchAlphanumeric;
+		const normalizedSearchCondensed = normalizedSearchAlphanumeric.replace(/\s+/g, '');
+		if(normalizedSearch.length < 2)
+			return [];
+		const isLegacy = !get_avtt_setting_value('2024Tooltips');
+		let suggestions = [];
+		if(window.ITEMS_CACHE != undefined && suggestionType != 'spellcasting'){
+			suggestions = suggestions.concat(window.ITEMS_CACHE
+				.filter(item => item.isLegacy == isLegacy || item.isHomebrew)
+				.map(item => ({
+					name: item.name,
+					type: item.magic ? 'Magic Item' : item.filterType || 'Item',
+					color: item.magic ? 'var(--compendium-magic-item-tooltip,#0f5cbc)' : 'var(--compendium-item-tooltip,#774521)',
+					match: normalize(item.name),
+					matchAlphanumeric: removeSpecial(item.name),
+					matchCondensed: removeSpecial(item.name).replace(/\s+/g, '')
+				})));
+		}
+		if((suggestionType == 'attack' || suggestionType == 'spellcasting') && window.SPELLS_CACHE != undefined){
+			suggestions = suggestions.concat(window.SPELLS_CACHE
+				.filter(spell => spell.definition?.isLegacy == isLegacy)
+				.map(spell => ({
+					name: spell.definition.name,
+					type: 'Spell',
+					color: 'var(--compendium-spell-tooltip,#704cd9)',
+					match: normalize(spell.definition.name),
+					matchAlphanumeric: removeSpecial(spell.definition.name),
+					matchCondensed: removeSpecial(spell.definition.name).replace(/\s+/g, '')
+				})));
+		}
+		const seen = new Set();
+		const searchWords = normalizedSearchAlphanumeric.split(/\s+/).filter(w => w.length > 0);
+		
+		return suggestions
+			.filter(suggestion => {
+				if(!suggestion.name) return false;
+				
+				const allWordsMatch = searchWords.every(word => 
+					suggestion.matchAlphanumeric.includes(word)
+				);
+				
+				if(allWordsMatch) return true;
+				
+				return suggestion.matchAlphanumeric.includes(normalizedSearchAlphanumeric) ||
+					   (searchHasSpecialChars && suggestion.match.includes(normalizedSearch)) ||
+					   (normalizedSearchCondensed.length >= 2 && suggestion.matchCondensed.includes(normalizedSearchCondensed));
+			})
+			.sort((a, b) => {
+				const aConsecutiveStart = a.matchAlphanumeric.startsWith(normalizedSearchAlphanumeric);
+				const bConsecutiveStart = b.matchAlphanumeric.startsWith(normalizedSearchAlphanumeric);
+				
+				if(aConsecutiveStart != bConsecutiveStart)
+					return aConsecutiveStart ? -1 : 1;
+				
+				if(!aConsecutiveStart) {
+					const aWordsInOrder = searchWords.filter((word, idx) => {
+						const prevWord = idx === 0 ? '' : searchWords[idx - 1];
+						const prevIdx = a.matchAlphanumeric.indexOf(prevWord);
+						const currentIdx = a.matchAlphanumeric.indexOf(word, prevIdx + prevWord.length);
+						return currentIdx !== -1;
+					}).length;
+					const bWordsInOrder = searchWords.filter((word, idx) => {
+						const prevWord = idx === 0 ? '' : searchWords[idx - 1];
+						const prevIdx = b.matchAlphanumeric.indexOf(prevWord);
+						const currentIdx = b.matchAlphanumeric.indexOf(word, prevIdx + prevWord.length);
+						return currentIdx !== -1;
+					}).length;
+					
+					if(aWordsInOrder != bWordsInOrder)
+						return bWordsInOrder - aWordsInOrder;
+				}
+				
+				if(aConsecutiveStart && bConsecutiveStart) {
+					const aMatchQuality = normalizedSearchAlphanumeric.length / a.matchAlphanumeric.length;
+					const bMatchQuality = normalizedSearchAlphanumeric.length / b.matchAlphanumeric.length;
+					if(Math.abs(aMatchQuality - bMatchQuality) > 0.01)
+						return bMatchQuality - aMatchQuality;
+				}
+				
+				return a.name.localeCompare(b.name);
+			})
+			.filter(suggestion => {
+				const key = `${suggestion.type}:${suggestion.name}`.toLowerCase();
+				if(seen.has(key))
+					return false;
+				seen.add(key);
+				return true;
+			})
+			.slice(0, 8);
+	}
+	removeDndSheetCellSuggestions(ownerDocument = document){
+		$('.dnd-sheet-cell-suggestions', ownerDocument).remove();
+	}
+	getDndSheetCellSuggestionOptions(ownerDocument = document){
+		return $('.dnd-sheet-cell-suggestions .dnd-sheet-cell-suggestion', ownerDocument);
+	}
+	setActiveDndSheetCellSuggestion(ownerDocument = document, activeIndex = 0){
+		const options = this.getDndSheetCellSuggestionOptions(ownerDocument);
+		if(options.length === 0)
+			return undefined;
+		const normalizedIndex = ((activeIndex % options.length) + options.length) % options.length;
+		options.removeClass('is-active').attr('aria-selected', 'false');
+		const activeOption = options.eq(normalizedIndex);
+		activeOption.addClass('is-active').attr('aria-selected', 'true');
+		const suggestionBox = activeOption.closest('.dnd-sheet-cell-suggestions')[0];
+		if(suggestionBox){
+			const optionElement = activeOption[0];
+			const optionTop = optionElement.offsetTop;
+			const optionBottom = optionTop + optionElement.offsetHeight;
+			const boxTop = suggestionBox.scrollTop;
+			const boxBottom = boxTop + suggestionBox.clientHeight;
+			if(optionTop < boxTop){
+				suggestionBox.scrollTop = optionTop;
+			} else if(optionBottom > boxBottom){
+				suggestionBox.scrollTop = optionBottom - suggestionBox.clientHeight;
+			}
+		}
+		return activeOption;
+	}
+	moveActiveDndSheetCellSuggestion(ownerDocument = document, delta = 1){
+		const options = this.getDndSheetCellSuggestionOptions(ownerDocument);
+		if(options.length === 0)
+			return undefined;
+		const activeIndex = options.index(options.filter('.is-active').first());
+		const baseIndex = activeIndex >= 0 ? activeIndex : (delta < 0 ? 0 : -1);
+		return this.setActiveDndSheetCellSuggestion(ownerDocument, baseIndex + delta);
+	}
+
+	getDndSheetSuggestionCellFromEvent(event){
+		const ownerDocument = event.target?.ownerDocument || document;
+		const selection = ownerDocument.getSelection?.();
+		let anchor = selection && selection.rangeCount > 0 ? selection.anchorNode : event.target;
+		if(anchor && anchor.nodeType === Node.TEXT_NODE){
+			anchor = anchor.parentElement;
+		}
+		const editableCell = $(anchor || event.target).closest('[contenteditable="true"]')[0];
+		if(editableCell && this.getDndSheetSuggestionCommaSegment(editableCell).isSpellListLine)
+			return editableCell;
+		const directTarget = $(event.target).closest('[data-avtt-suggestion-type]');
+		if(directTarget.length > 0)
+			return directTarget[0];
+		const selectionTarget = $(anchor).closest('[data-avtt-suggestion-type]');
+		return selectionTarget.length > 0 ? selectionTarget[0] : undefined;
+	}
+	getDndSheetCellTextModel(cell){
+		const ownerDocument = cell.ownerDocument || document;
+		const selection = (ownerDocument.defaultView || window).getSelection?.();
+		const focusNode = selection && selection.rangeCount > 0 ? selection.focusNode : undefined;
+		const focusOffset = selection && selection.rangeCount > 0 ? selection.focusOffset : undefined;
+		let text = '';
+		let caretOffset = undefined;
+		const runs = [];
+		const visit = (node) => {
+			if(node.nodeType === Node.TEXT_NODE){
+				if(node === focusNode && caretOffset === undefined)
+					caretOffset = text.length + focusOffset;
+				runs.push({ node, start: text.length, end: text.length + node.nodeValue.length });
+				text += node.nodeValue;
+				return;
+			}
+			if(node.nodeName === 'BR'){
+				if(node === focusNode && caretOffset === undefined)
+					caretOffset = text.length;
+				text += '\n';
+				return;
+			}
+			const children = node.childNodes ? Array.from(node.childNodes) : [];
+			children.forEach((child, index) => {
+				if(node === focusNode && index === focusOffset && caretOffset === undefined)
+					caretOffset = text.length;
+				visit(child);
+			});
+			if(node === focusNode && focusOffset === children.length && caretOffset === undefined)
+				caretOffset = text.length;
+		};
+		visit(cell);
+		if(caretOffset === undefined || !focusNode || !cell.contains(focusNode))
+			caretOffset = text.length;
+		return { text, runs, caretOffset };
+	}
+	getDndSheetSuggestionCommaSegment(cell){
+		const ownerDocument = cell.ownerDocument || document;
+		const selection = (ownerDocument.defaultView || window).getSelection?.();
+		let focusNode = selection && selection.rangeCount > 0 ? selection.focusNode : undefined;
+		if(focusNode && focusNode.nodeType === Node.TEXT_NODE)
+			focusNode = focusNode.parentElement;
+		const wrappedLevel = focusNode ? $(focusNode).closest('.add-input', cell)[0] : undefined;
+		const model = this.getDndSheetCellTextModel(wrappedLevel || cell);
+		const { text, caretOffset } = model;
+		let lineStart, lineEnd;
+		if(wrappedLevel){
+			lineStart = 0;
+			lineEnd = text.length;
+		} else {
+			lineStart = text.lastIndexOf('\n', Math.max(caretOffset - 1, 0)) + 1;
+			lineEnd = text.indexOf('\n', caretOffset);
+			if(lineEnd === -1)
+				lineEnd = text.length;
+		}
+		const lineText = text.slice(lineStart, lineEnd);
+		const labelMatch = /At will:|Cantrips \(at will\):|(\d+\/day( each)?|\d+\w+ level \(\d+ slots?\)):/gi.exec(lineText);
+		const isSpellListLine = wrappedLevel != undefined || labelMatch != null;
+		if(!isSpellListLine)
+			return { model, segments: [], index: -1, isSpellListLine: false };
+		const labelEnd = labelMatch ? labelMatch.index + labelMatch[0].length : 0;
+		const segments = [];
+		let cursor = 0;
+		lineText.split(',').forEach((part, partIndex) => {
+			const start = lineStart + cursor;
+			const end = start + part.length;
+			if(partIndex === 0 && labelEnd > 0){
+				const trimLength = Math.min(labelEnd, part.length);
+				segments.push({ text: part.slice(trimLength), start: start + trimLength, end });
+			} else {
+				segments.push({ text: part, start, end });
+			}
+			cursor += part.length + 1; // +1 accounts for the comma removed by split
+		});
+		let index = segments.length - 1;
+		for(let i=0; i<segments.length; i++){
+			if(caretOffset <= segments[i].end || i === segments.length - 1){
+				index = i;
+				break;
+			}
+		}
+		return { model, segments, index, isSpellListLine: true };
+	}
+	replaceDndSheetCellRange(cell, model, start, end, replacementText){
+		const ownerDocument = cell.ownerDocument || document;
+		const ownerWindow = ownerDocument.defaultView || window;
+		const pointAt = (offset) => {
+			for(const run of model.runs){
+				if(offset <= run.end)
+					return { node: run.node, offset: Math.max(0, offset - run.start) };
+			}
+			const lastRun = model.runs[model.runs.length - 1];
+			return lastRun ? { node: lastRun.node, offset: lastRun.node.nodeValue.length } : { node: cell, offset: cell.childNodes.length };
+		};
+		const range = ownerDocument.createRange();
+		const startPoint = pointAt(start);
+		const endPoint = pointAt(end);
+		range.setStart(startPoint.node, startPoint.offset);
+		range.setEnd(endPoint.node, endPoint.offset);
+		range.deleteContents();
+		const textNode = ownerDocument.createTextNode(replacementText);
+		range.insertNode(textNode);
+		const caretRange = ownerDocument.createRange();
+		caretRange.setStart(textNode, textNode.nodeValue.length);
+		caretRange.collapse(true);
+		const selection = ownerWindow.getSelection?.();
+		if(selection){
+			selection.removeAllRanges();
+			selection.addRange(caretRange);
+		}
+	}
+	getDndSheetSuggestionAnchorRect(cell){
+		const ownerDocument = cell.ownerDocument || document;
+		const selection = (ownerDocument.defaultView || window).getSelection?.();
+		if(selection && selection.rangeCount > 0 && cell.contains(selection.focusNode)){
+			const range = selection.getRangeAt(0).cloneRange();
+			range.collapse(true);
+			let rect = range.getClientRects()[0];
+			if(!rect || (!rect.width && !rect.height)){
+				rect = range.getBoundingClientRect();
+			}
+			if(rect && (rect.width || rect.height || rect.top)){
+				return rect;
+			}
+		}
+		return cell.getBoundingClientRect();
+	}
+	showDndSheetCellSuggestions(cell, suggestionType, onSelect){
+		const target = $(cell);
+		const ownerDocument = cell.ownerDocument || document;
+		const ownerWindow = ownerDocument.defaultView || window;
+
+		const segmentInfo = this.getDndSheetSuggestionCommaSegment(cell);
+		const useSegmentedMatch = segmentInfo.isSpellListLine;
+		// a spell list line always searches spells only, regardless of the cell's assigned suggestion type
+		const effectiveSuggestionType = useSegmentedMatch ? 'spellcasting' : suggestionType;
+		const searchText = useSegmentedMatch ? segmentInfo.segments[segmentInfo.index].text.trim() : target.text().trim();
+		const suggestions = this.getDndSheetCellSuggestionItems(effectiveSuggestionType, searchText);
+		this.removeDndSheetCellSuggestions(ownerDocument);
+		if(suggestions.length === 0)
+			return;
+		const suggestionBox = $(`<div class="dnd-sheet-cell-suggestions" role="listbox"></div>`);
+		suggestions.forEach((suggestion, index) => {
+			const option = $(`<button type="button" class="dnd-sheet-cell-suggestion" data-index="${index}" role="option" aria-selected="false">
+				<span class="dnd-sheet-cell-suggestion-name"></span>
+				<span class="dnd-sheet-cell-suggestion-type"></span>
+			</button>`);
+			option.find('.dnd-sheet-cell-suggestion-name').text(suggestion.name);
+			option.find('.dnd-sheet-cell-suggestion-type').text(suggestion.type);
+			option.on('mouseenter', () => {
+				this.setActiveDndSheetCellSuggestion(ownerDocument, index);
+			});
+			option.on('mousedown', (event) => {
+				event.preventDefault();
+				event.stopPropagation();
+				if(useSegmentedMatch){
+					const segment = segmentInfo.segments[segmentInfo.index];
+					const leadingWhitespace = segment.text.match(/^\s*/)[0];
+					const trailingSuffix = segment.text.slice(leadingWhitespace.length).match(/[^a-zA-Z0-9)']*$/)[0];
+					const replacementText = `${leadingWhitespace}${suggestion.name}${trailingSuffix}`;
+					this.replaceDndSheetCellRange(cell, segmentInfo.model, segment.start, segment.end, replacementText);
+				} else {
+					target.text(suggestion.name);
+				}
+				this.removeDndSheetCellSuggestions(ownerDocument);
+				onSelect?.();
+				cell.focus();
+			});
+			const suggestionName = option.find('.dnd-sheet-cell-suggestion-name')[0];
+			suggestionName.style.setProperty('--dnd-sheet-suggestion-color', suggestion.color);
+			suggestionName.style.setProperty('color', 'var(--dnd-sheet-suggestion-color)');
+			suggestionBox.append(option);
+		});
+		$(ownerDocument.body).append(suggestionBox);
+		const rect = cell.getBoundingClientRect();
+		const anchorRect = this.getDndSheetSuggestionAnchorRect(cell);
+		suggestionBox.css({
+			position: 'absolute',
+			left: `${rect.left + ownerWindow.scrollX}px`,
+			top: '0px',
+			width: `${Math.max(rect.width, 240)}px`,
+			'z-index': 100000000,
+			background: 'var(--background-color, #fff)',
+			color: 'var(--text-color, #111)',
+			border: '1px solid var(--border-color, #999)',
+			'box-shadow': '0 2px 8px rgba(0, 0, 0, 0.25)',
+			'border-radius': '4px',
+			padding: '3px',
+			visibility: 'hidden'
+		});
+
+		const suggestionBoxHeight = suggestionBox.outerHeight();
+		suggestionBox.css({
+			top: `${anchorRect.top + ownerWindow.scrollY - suggestionBoxHeight}px`,
+			visibility: 'visible'
+		});
+		this.setActiveDndSheetCellSuggestion(ownerDocument, 0);
+	}
+
+	async getSortableJquery(ownerDocument){
+		const ownerWindow = ownerDocument.defaultView || window;
+		if(ownerDocument === document){
+			return $;
+		}
+		if(ownerWindow.jQuery && ownerWindow.jQuery !== window.jQuery && ownerWindow.jQuery.fn?.sortable){
+			return ownerWindow.jQuery;
+		}
+		if(!ownerWindow.avttJqueryUiPromise){
+			ownerWindow.avttJqueryUiPromise = (async () => {
+				const scriptNames = ['jquery-3.6.0.min.js', 'jquery-ui.min.js', 'jquery.ui.touch-punch.js'];
+				for(const scriptName of scriptNames){
+					await this.loadScriptInDocument(ownerDocument, `${window.EXTENSION_PATH}${scriptName}`);
+				}
+			})();
+		}
+		await ownerWindow.avttJqueryUiPromise;
+		return ownerWindow.jQuery;
+	}
+	loadScriptInDocument(ownerDocument, src){
+		return new Promise((resolve, reject) => {
+			const script = ownerDocument.createElement('script');
+			script.src = src;
+			script.onload = resolve;
+			script.onerror = reject;
+			ownerDocument.head.appendChild(script);
+		});
+	}
+	setupDndSheetTableSortable(table, ownerDocument, persistCurrentNoteText){
+		const initializeSortable = (sortableJquery) => {
+			const $table = sortableJquery(table);
+			const rowsContainer = $table.find('tbody').length > 0 ? $table.find('tbody') : $table;
+			if (rowsContainer.find('> tr').length <= 1) {
+				return;
+			}
+			rowsContainer.find('> tr').each(function() {
+				const $row = sortableJquery(this);
+				if ($row.find('> .table-row-drag-handle').length === 0) {
+					const $handleCell = sortableJquery('<td class="table-row-drag-handle" contenteditable="false" aria-hidden="true">⋮⋮</td>');
+					$row.prepend($handleCell);
+				}
+				this.setAttribute('draggable', 'false');
+				$row.off('dragstart.dndSheetRowSort dragover.dndSheetRowSort dragend.dndSheetRowSort drop.dndSheetRowSort');
+				$row.find('> .table-row-drag-handle').off('pointerdown.dndSheetRowSort mousedown.dndSheetRowSort pointerup.dndSheetRowSort mouseup.dndSheetRowSort');
+			});
+			if ($table.data('ui-sortable')) {
+				$table.sortable('destroy');
+			}
+			$table.sortable({
+				items: '> tbody > tr, > tr',
+				handle: '.table-row-drag-handle',
+				placeholder: 'ui-sortable-placeholder',
+				scroll: false,
+				helper: function(e, ui) {
+					ui.children().each(function() {
+						$(this).width($(this).width());
+					});
+					return ui;
+				},
+				start: function(e, ui) {
+					const $cells = ui.item.children('td, th');
+					let placeholderHtml = '';
+
+					$cells.each(function() {
+						const width = $(this).outerWidth();
+						placeholderHtml += '<td style="width:' + width + 'px; box-sizing: border-box;">&nbsp;</td>';
+					});
+
+					ui.placeholder.html(placeholderHtml);
+					ui.placeholder.height(ui.item.height());
+				},
+				stop: function(e, ui) {
+					const $cells = ui.item.children('td, th');
+					$cells.css('width', '');
+					$cells.each(function() {
+						if (!$.trim($(this).attr('style'))) {
+							$(this).removeAttr('style');
+						}
+					});
+				},
+				update: function() {
+					persistCurrentNoteText({forceSave: true, rescanStatBlock: false});
+				}
+			});
+		};
+		if(ownerDocument === document){
+			initializeSortable($);
+			return;
+		}
+		this.getSortableJquery(ownerDocument).then(initializeSortable).catch((error) => {
+			console.warn('Failed to initialize sortable in popout document', error);
+		});
+	}
+	bindDndSheetTemplateEvents(id, note_text, note_container, options = {}){
+		const self = this;
+		const container = $(note_container);
+		const initialNoteText = $(note_text);
+		if(container.find('.dnd-sheet').length === 0 && initialNoteText.find('.dnd-sheet').length === 0){
+			return;
+		}
+		const ownerDocument = container[0]?.ownerDocument || initialNoteText[0]?.ownerDocument || document;
+		const ownerWindow = ownerDocument.defaultView || window;
+		if(ownerDocument !== document && typeof pcTemplateTabKey === 'function'){
+			$(ownerDocument).off('keydown.pcTemplateTabKey').on('keydown.pcTemplateTabKey', pcTemplateTabKey);
+		}
+		const tokenId = options.tokenId;
+		const downloadToken = options.downloadToken;
+		const uploadId = options.uploadId ?? (tokenId ?? id);
+		const getCurrentNoteText = () => self.getDisplayedNoteText(container, initialNoteText);
+		const persistCurrentNoteText = (persistOptions) => {
+			self.persistStatBlockContent(id, getCurrentNoteText(), container, {tokenId, ...persistOptions});
+		};
+		let suppressNextSuggestionFocusin = false;
+		const setLockState = () => {
+			const currentNoteText = getCurrentNoteText();
+			if(!window.unlockTemplateStatBlocks){
+				currentNoteText.find('.dnd-sheet button').attr("contenteditable", "false");
+			} else{
+				currentNoteText.find('.dnd-sheet [contenteditable]:not(a):not(.table-row-drag-handle):not(.add-table-row):not(.injected-input):not(.added-input-desc)').attr("contenteditable", "true");
+			}
+		};
+
+		getCurrentNoteText().find('a').attr('contenteditable', 'false');
+		container.off('focusout.editable').on('focusout.editable', '.dnd-sheet [contenteditable="true"]', (e)=>{
+			e.preventDefault();
+			e.stopPropagation();
+			e.stopImmediatePropagation();
+			if($(e.target).is('[data-avtt-suggestion-type]')){
+				const ownerDocument = e.target?.ownerDocument || document;
+				setTimeout(() => self.removeDndSheetCellSuggestions(ownerDocument), 150);
+			}
+			setTimeout(()=>{
+				if(container.find('.dnd-sheet [contenteditable="true"]:is(:focus, :focus-within)').length>0) return;
+				if($(e.target).is('.injected-input')) return;  
+				persistCurrentNoteText({forceSave: true, rescanStatBlock: true});
+			}, 10);
+		});
+		container.off('change.checkbox').on('change.checkbox', '.dnd-sheet input', (e)=>{
+			if (e.target && e.target.nodeName === 'INPUT' && e.target.type === 'checkbox') {				
+				e.preventDefault();
+				e.stopPropagation();
+				e.stopImmediatePropagation();
+				if (e.target.checked) {
+					e.target.setAttribute('checked', 'checked');
+				} else {
+					e.target.removeAttribute('checked');
+				}
+			} else if (e.target && e.target.nodeName === 'INPUT' && e.target.type === 'number') {
+				e.target.style.width = `${e.target.value.length+4}ch`;
+			}
+			persistCurrentNoteText({forceSave: true, rescanStatBlock: false});
+		})
+		container.off('pointerdown.profChange, touchstart.profChange').on('pointerdown.profChange, touchstart.profChange', '.dnd-sheet .prof-checkbox', (e)=>{
+			e.preventDefault();
+			e.stopPropagation();
+			e.stopImmediatePropagation();
+			const target = $(e.currentTarget);
+			const currentState = parseInt(target.attr('data-state'));
+			const newState = (currentState + 1) % 4;
+			target.attr('data-state', newState);
+			persistCurrentNoteText({forceSave: true, rescanStatBlock: false});
+		})
+		container.off('paste.dndSheet').on('paste.dndSheet', '.dnd-sheet [contentEditable="true"]', function (e) {
+			e.preventDefault();
+			e.stopPropagation();
+			e.stopImmediatePropagation();
+			const text = (e.originalEvent?.clipboardData || e.clipboardData || window.clipboardData).getData('text/plain');
+			const ownerDocument = e.target?.ownerDocument || document;
+			ownerDocument.execCommand('insertText', false, text);
+		});
+		container.off('keydown.dndSheetEnter').on('keydown.dndSheetEnter', '.dnd-sheet [contenteditable="true"]', function (e) {
+			if(e.key !== 'Enter' || e.isDefaultPrevented()) return;
+			const ownerDocument = e.target?.ownerDocument || document;
+			if(self.getDndSheetCellSuggestionOptions(ownerDocument).length > 0) return;
+			const selection = (ownerDocument.defaultView || window).getSelection();
+			if(!selection || selection.rangeCount === 0 || !$(selection.anchorNode).closest('.dnd-sheet [contenteditable="true"]').length) return;
+			// left to the browser this wraps the rest of the field in new divs, which rewrites the sheet's structure
+			e.preventDefault();
+			e.stopPropagation();
+			const range = selection.getRangeAt(0);
+			range.deleteContents();
+			const lineBreak = ownerDocument.createElement('br');
+			range.insertNode(lineBreak);
+			if(lineBreak.nextSibling == null){
+				lineBreak.parentNode.appendChild(ownerDocument.createElement('br')); // the caret needs a following break to land on the new line
+			}
+			range.setStartAfter(lineBreak);
+			range.collapse(true);
+			selection.removeAllRanges();
+			selection.addRange(range);
+		});
+		container.off('input.dndSheetSuggestion keydown.dndSheetSuggestion keyup.dndSheetSuggestion focusin.dndSheetSuggestion').on('input.dndSheetSuggestion keydown.dndSheetSuggestion keyup.dndSheetSuggestion focusin.dndSheetSuggestion', '.dnd-sheet', function(e){
+			if(e.type == 'focusin' && suppressNextSuggestionFocusin){
+				suppressNextSuggestionFocusin = false;
+				return;
+			}
+			const suggestionCell = self.getDndSheetSuggestionCellFromEvent(e);
+			if(!suggestionCell)
+				return;
+			if(e.type == 'keydown' && !['ArrowDown', 'ArrowUp', 'Enter', 'Escape', 'Tab'].includes(e.key))
+				return;
+			if(e.type == 'keyup' && ['ArrowDown', 'ArrowUp', 'Enter', 'Escape'].includes(e.key))
+				return;
+			if(e.type == 'keydown' && e.key == 'Tab'){
+				suppressNextSuggestionFocusin = true;
+				self.removeDndSheetCellSuggestions(suggestionCell.ownerDocument);
+				return;
+			}
+			if(e.type == 'keydown' && ['ArrowDown', 'ArrowUp'].includes(e.key)){
+				e.preventDefault();
+				e.stopPropagation();
+				e.stopImmediatePropagation();
+				const cellSuggestionType = $(suggestionCell).attr('data-avtt-suggestion-type') || 'spellcasting';
+				if(self.getDndSheetCellSuggestionOptions(suggestionCell.ownerDocument).length === 0){
+					self.showDndSheetCellSuggestions(suggestionCell, cellSuggestionType);
+				}
+				self.moveActiveDndSheetCellSuggestion(suggestionCell.ownerDocument, e.key == 'ArrowDown' ? 1 : -1);
+				return;
+			}
+			if(e.type == 'keyup' && !['ArrowDown', 'ArrowUp', 'Enter', 'Escape'].includes(e.key))
+				return;
+			if(e.key == 'Escape'){
+				e.preventDefault();
+				self.removeDndSheetCellSuggestions(suggestionCell.ownerDocument);
+				return;
+			}
+			if(e.key == 'Enter'){
+				const ownerDocument = suggestionCell.ownerDocument || document;
+				const activeSuggestion = $('.dnd-sheet-cell-suggestions .dnd-sheet-cell-suggestion.is-active', ownerDocument).first();
+				const selectedSuggestion = activeSuggestion.length > 0 ? activeSuggestion : $('.dnd-sheet-cell-suggestions .dnd-sheet-cell-suggestion', ownerDocument).first();
+				if(selectedSuggestion.length > 0){
+					e.preventDefault();
+					e.stopPropagation();
+					e.stopImmediatePropagation();
+					selectedSuggestion.trigger('mousedown');
+				}
+				return;
+			}
+			self.showDndSheetCellSuggestions(suggestionCell, $(suggestionCell).attr('data-avtt-suggestion-type') || 'spellcasting');
+		});
+		$(ownerDocument).off('pointerdown.dndSheetSuggestionDismiss mousedown.dndSheetSuggestionDismiss focusin.dndSheetSuggestionDismiss').on('pointerdown.dndSheetSuggestionDismiss mousedown.dndSheetSuggestionDismiss focusin.dndSheetSuggestionDismiss', function(e){
+			if($('.dnd-sheet-cell-suggestions', ownerDocument).length === 0)
+				return;
+			if($(e.target).closest('.dnd-sheet-cell-suggestions').length > 0)
+				return;
+			const activeSuggestionCell = container.find('.dnd-sheet [data-avtt-suggestion-type][contenteditable="true"]:is(:focus, :focus-within)').first()[0];
+			const targetSuggestionCell = $(e.target).closest('.dnd-sheet [data-avtt-suggestion-type][contenteditable="true"]').first()[0];
+			if(activeSuggestionCell && targetSuggestionCell === activeSuggestionCell)
+				return;
+			self.removeDndSheetCellSuggestions(ownerDocument);
+		});
+
+		getCurrentNoteText().find('.dnd-sheet table').each(function() {
+			self.setupDndSheetTableSortable(this, ownerDocument, persistCurrentNoteText);
+			const $table = $(this);
+			const header = $table.find('th').first().parent().parent();
+			header.find('> tr').each(function() {
+				const $row = $(this);
+				if ($row.find('> .header-spacer').length === 0) {
+					const $handleCell = $('<th class="header-spacer" aria-hidden="true"></td>');
+					$row.prepend($handleCell);
+				}
+			});
+		
+			if($table.next('.add-table-row').length>0)
+				return;
+			const add_table_row = $(`<button class="add-table-row" contenteditable="false">+</button>`);
+			$table.after(add_table_row);
+		});
+		container.off('pointerdown.addRow, touchstart.addRow').on('pointerdown.addRow, touchstart.addRow', '.dnd-sheet .add-table-row', function (e) {
+			e.preventDefault();
+			e.stopPropagation();
+			e.stopImmediatePropagation();
+			const table = $(e.target).prev('table');
+			const tableBody = $(table).find('tbody');
+			const targetContainer = tableBody.length>0 ? tableBody : table;
+			const newRow = targetContainer.find('>tr:last').clone();
+			newRow.find('td:not(.table-row-drag-handle), th').html('');
+			targetContainer.append(newRow);
+			persistCurrentNoteText({forceSave: true, rescanStatBlock: false});
+		});
+		setLockState();
+
+		if(options.showControls !== true)
+			return;
+		const titleBar = container.find('.title_bar').first();
+		const controlContainer = options.controlContainer ? $(options.controlContainer) : (titleBar.length > 0 ? titleBar : container);
+		controlContainer.find('.lockStatButton, .download_button, .upload_button').remove();
+		const absoluteControls = titleBar.length === 0;
+		const controlStyle = absoluteControls ? "cursor: pointer; position: absolute; top: 3px; width: 20px; height: 20px; color: #ddd;" : "cursor: pointer; position: relative; display:inline-block; color: #ddd;";
+		const spanStyle = absoluteControls ? "font-size:20px;" : "font-size: 20px; position: relative; top: 4px;";
+		const lockStatButton = $(`<div class='lockStatButton' style="${controlStyle}${absoluteControls ? 'left: 2px;' : ''}">
+											<span title="Lock roll buttons so the text cursor isn't placed inside them on click" class="material-symbols-outlined" style="${spanStyle}">
+											${window.unlockTemplateStatBlocks ? "lock_open_right" : "lock"}
+											</span>
+										</div>`)
+		lockStatButton.off('click.lockStatBlock').on('click.lockStatBlock', ()=>{
+			window.unlockTemplateStatBlocks = !window.unlockTemplateStatBlocks;
+			const span = lockStatButton.find('>span');
+			setLockState();
+			span.text(window.unlockTemplateStatBlocks ? 'lock_open_right' : 'lock');
+		})
+		const downloadStat = $(`<div class='download_button' style="${controlStyle}${absoluteControls ? 'left: 25px;' : ''}">
+											<span title="Download Statblock as HTML" class="material-symbols-outlined" style="${absoluteControls ? 'font-size:20px;' : 'font-size: 24px; position: relative; top: 4px;'}">
+											download
+											</span>
+										</div>`)
+		downloadStat.off('click.exportStatBlock').on('click.exportStatBlock', function () { 
+			self.downloadStatBlock(id, downloadToken);
+		});
+		const uploadStat = $(`<div class='upload_button' style="${controlStyle}${absoluteControls ? 'left: 45px;' : ''}">
+			<span title="Upload HTML Statblock" class="material-symbols-outlined" style="${absoluteControls ? 'font-size:20px;' : 'font-size: 24px; position: relative; top: 4px;'}">
+				upload
+			</span>
+			<input accept='.html' class='import_pc_template' data-id='${uploadId}' type='file' single style='display: none' />
+			</div>
+		`);
+		uploadStat.find('>span').off('click.importStatBlock').on('click.importStatBlock', function(){
+			uploadStat.find('input[type="file"]').trigger('click');
+		});
+		uploadStat.find('input[type="file"]').change(function(e) {
+			import_pc_template_html(e.target.files, getCurrentNoteText(), id, tokenId);
+		});
+		if(titleBar.length > 0){
+			container.find('.title_bar_text').css('display', 'inline-block');
+			titleBar.prepend(lockStatButton, downloadStat, uploadStat);
+			titleBar.css({
+				'display': 'flex',
+				'align-items': 'center'
+			});
+		} else{
+			controlContainer.prepend(lockStatButton, downloadStat, uploadStat);
+		}
+	}
+	bindNotePopoutButton(id, note_container, statBlock = false){
+		const self = this;
+		note_container.find('.popout-button').off('click.popout').on('click.popout', function(event){
+			const windowName = self.getNotePopoutName(id);
+			popoutWindow(windowName, note_container.find(`div.note[data-id='${id}']`), note_container.width(), note_container.height());
+			const popoutBody = $(childWindows[windowName].document).find('body');
+			const popoutNote = popoutBody.find(`div.note[data-id='${id}']`);
+			const popoutNoteText = popoutNote.find('.note-text').first();
+			self.bindDisplayedNoteEvents(id, popoutNote, popoutNoteText, popoutBody);
+			popoutBody.css('overflow', 'auto');
+			$(event.currentTarget).closest('.resize_drag_window').hide();
+		})
+	}
+	findNotePopoutWindow(id){
+		for(const name in childWindows){
+			const childWindow = childWindows[name];
+			if(!childWindow || childWindow.closed)
+				continue;
+			try{
+				if($(childWindow.document).find(`div.note[data-id='${id}']`).length > 0)
+					return {name, childWindow};
+			}
+			catch(error){
+				console.warn('Unable to check note popout window', name, error);
+			}
+		}
+		return undefined;
+	}
+	findStatBlockPopoutWindow(id){
+		for(const name in childWindows){
+			const childWindow = childWindows[name];
+			if(!childWindow || childWindow.closed)
+				continue;
+			try{
+				if($(childWindow.document).find(`.custom-stat-block[data-stat-id="${id}"]`).length > 0)
+					return {name, childWindow};
+			}
+			catch(error){
+				console.warn('Unable to check stat block popout window', name, error);
+			}
+		}
+		return undefined;
+	}
+	async renderDisplayedNote(id, note, note_text, note_container, scrollTop = 0){
+		const self = this;
+		note_text.empty();
+		note_text.append(self.notes[id].text);
+		$(note_text).find('.injected-input, .added-input-desc').remove();
+		$(note_text).find('.add-input:not(.avtt-custom-tracker)').replaceWith((i, innerHtml) => {
+			return innerHtml;
+		});
+		await this.translateHtmlAndBlocks(note_text, id);
+		add_journal_roll_buttons(note_text);
+		this.add_journal_tooltip_targets(note_text);
+		this.block_send_to_buttons(note_text);
+		add_stat_block_hover(note_text);
+		add_aoe_statblock_click(note_text);
+		$(note_text).find('.add-input').each(function(){window.JOURNAL.addTrackedInputs($(this), {noteId: id})})
+
+		if(note.find('.note-text').length === 0){
+			note.append(note_text);
+		}
+		note.find("a").attr("target", "_blank");
+		if($(note).parent().length === 0){
+			note_container.append(note);
+		}
+		self.bindDisplayedNoteEvents(id, note, note_text, note_container);
+		this.positionNotePins(id, note_text);
+		note_text[0].scrollTop = scrollTop;
+		if(note_text.find('.dnd-sheet').length>0){
+			self.bindDndSheetTemplateEvents(id, note_text, note_container, {showControls: $(note_container).find('.title_bar').length > 0});
+		}
+	}
+	async updateNotePopout(id, scrollTop = 0){
+		const popout = this.findNotePopoutWindow(id);
+		if(!popout)
+			return false;
+		const popoutBody = $(popout.childWindow.document).find('body');
+		let popoutNote = popoutBody.find(`div.note[data-id='${id}']`);
+		if(popoutNote.length === 0){
+			popoutNote = $(`<div class='note' data-id='${id}'></div>`);
+			popoutBody.append(popoutNote);
+		}
+		let popoutNoteText = popoutNote.find('.note-text').first();
+		if(popoutNoteText.length === 0){
+			popoutNoteText = $(`<div class='note-text'/>`);
+		}
+		await this.renderDisplayedNote(id, popoutNote, popoutNoteText, popoutBody, scrollTop);
+		return true;
+	}
+	async updateStatBlockPopout(id, tokenId, scrollTop = 0){
+		const popout = this.findStatBlockPopoutWindow(id);
+		if(!popout || this.notes[id] == undefined)
+			return false;
+		const popoutBody = $(popout.childWindow.document).find('body');
+		let targetRescan = popoutBody.find('.avtt-stat-block-container, .note-text').first();
+		if(targetRescan.length === 0)
+			return false;
+		const token = window.TOKEN_OBJECTS[tokenId] || window.all_token_objects[tokenId];
+		targetRescan.html(this.notes[id].text);
+		popoutBody.find('.injected-input, .added-input-desc').remove();
+		popoutBody.find('.add-input:not(.avtt-custom-tracker)').replaceWith((i, innerHtml) => {
+			return innerHtml;
+		})
+		await this.translateHtmlAndBlocks(targetRescan);
+		add_journal_roll_buttons(targetRescan, tokenId);
+		this.add_journal_tooltip_targets(targetRescan);
+		add_ability_tracker_inputs(targetRescan, tokenId);
+		popoutBody.find('.add-input').each(function(){window.JOURNAL.addTrackedInputs($(this), {token, noteId: id})});
+		add_stat_block_hover(targetRescan, tokenId);
+		add_aoe_statblock_click(targetRescan, tokenId);
+		targetRescan.find('a').attr('contenteditable', 'false');
+		if(token){
+			sync_pc_template(token, popoutBody);
+			let imageUrl = parse_img(token.options.imgsrc);
+			if(token.options.imgsrc.startsWith('above-bucket-not-a-url')){
+				imageUrl = await getAvttStorageUrl(imageUrl);
+			}
+			targetRescan.append(`<div class="image" style="display: inline-block; position: relative;"><${(token.options.videoToken == true || ['.mp4', '.webm', '.m4v'].some(d => token.options.imgsrc.includes(d))) ? 'video disableremoteplayback muted' : 'img'}
+				src="${imageUrl}"    
+				class="monster-image"
+				style="max-width: 100%;">
+				</div>`);
+			popoutBody.find("img.monster-image, .monster-image").each((i,block) => {
+				createSendPlayerButton(block, "login", true).insertAfter(block);
+			});
+		}
+		this.bindDndSheetTemplateEvents(id, targetRescan, popoutBody, {tokenId, showControls: false});
+		targetRescan[0].scrollTop = scrollTop;
+		return true;
+	}
+
 	display_note(id, statBlock = false, scrollTop=0){
 		let self=this;
 		let noteAlreadyOpen = $(`div.note[data-id='${id}']`).length>0;
@@ -2005,7 +2929,7 @@ class JournalManager{
 			note_container.toggleClass(['ui-dialog', 'ui-corner-all', 'ui-widget', 'ui-widget-content', 'ui-front', 'ui-draggable', 'ui-resizable'], !isMinimized);
 		});
 		if(!noteAlreadyOpen){
-			note.attr('title',self.notes[id].title);
+			note_container.find('.title_bar').attr('title',self.notes[id].title);
 			if(window.DM || self.notes[id].text.includes('.dnd-sheet')){
 				let visibility_container=$("<div class='visibility-container'/>");
 
@@ -2129,137 +3053,13 @@ class JournalManager{
 			note.find("a").attr("target", "_blank");
 			note_container.append(note);
 
-			note.off('click').on('click', '.tooltip-hover[href*="https://www.dndbeyond.com/sources/dnd/"], .int_source_link ', function (event) {
-				event.preventDefault();
-				render_source_chapter_in_iframe(event.target.href);
-			});
-			note.off('focusout.editable').on('focusout.editable', '[contenteditable="true"]', (e)=>{
-				setTimeout(()=>{
-					if(note.find('[contenteditable="true"]:is(:focus, :focus-within)').length>0) return;
-					if($(e.target).is('.injected-input')) return;  
-					self.persistStatBlockContent(id, note_text, note_container, {rescanStatBlock: true});
-				}, 10);
-			});
-			note.off('change.checkbox').on('change.checkbox', 'input', (e)=>{
-				if (e.target && e.target.nodeName === 'INPUT' && e.target.type === 'checkbox') {				
-					if (e.target.checked) {
-						e.target.setAttribute('checked', 'checked');
-					} else {
-						e.target.removeAttribute('checked');
-					}
-				}
-				self.persistStatBlockContent(id, note_text, note_container, {forceSave: true, rescanStatBlock: false});
-			})
-			note_container.off('pointerdown.profChange, touchstart.profChange').on('pointerdown.profChange, touchstart.profChange', '.prof-checkbox', (e)=>{
-				e.preventDefault();
-				const target = $(e.currentTarget);
-				const currentState = parseInt(target.attr('data-state'));
-				const newState = (currentState + 1) % 4;
-				target.attr('data-state', newState);
-				self.persistStatBlockContent(id, note_text, note_container, {forceSave: true, rescanStatBlock: false});
-			})
+			self.bindDisplayedNoteEvents(id, note, note_text, note_container);
+			self.bindNotePopoutButton(id, note_container, statBlock);
 			this.positionNotePins(id, note_text);
 			note_text[0].scrollTop = scrollTop;
 			
 			if(note_text.find('.dnd-sheet').length>0){
-				note_text.find('a').attr('contenteditable', 'false');
-				note_container.find('.popout-button, .lockStatButton, .download_button, .upload_button').remove();
-				const lockStatButton = $(`<div class='lockStatButton' style="cursor: pointer; position: relative; display:inline-block; color: #ddd;">
-											<span title="Lock roll buttons so the text cursor isn't placed inside them on click" class="material-symbols-outlined" style="font-size: 20px; position: relative; top: 4px;">
-											${!window.lockTemplateStatBlocks ? "lock_open_right" : "lock"}
-											</span>
-										</div>`)
-				lockStatButton.off('click.lockStatBlock').on('click.lockStatBlock', ()=>{
-				window.lockTemplateStatBlocks = !window.lockTemplateStatBlocks;
-				const span = lockStatButton.find('>span');
-				if(window.lockTemplateStatBlocks){
-					note_text.find('.dnd-sheet button').attr("contenteditable", "false");
-					span.text('lock');
-				} else{
-					note_text.find('.dnd-sheet [contenteditable]:not(a):not(.table-row-drag-handle):not(.add-table-row)').attr("contenteditable", "true");
-					span.text('lock_open_right');
-				}
-				})
-				
-				if(window.lockTemplateStatBlocks){
-					note_text.find('.dnd-sheet button').attr("contenteditable", "false");
-				} else{
-					note_text.find('.dnd-sheet [contenteditable]:not(a):not(.table-row-drag-handle):not(.add-table-row)').attr("contenteditable", "true");
-				}
-
-				const downloadStat = $(`<div class='download_button' style="cursor: pointer; position: relative; display:inline-block; color: #ddd;">
-											<span title="Download Statblock as HTML" class="material-symbols-outlined" style="font-size: 24px; position: relative; top: 4px;">
-											download
-											</span>
-										</div>`)
-				downloadStat.off('click.exportStatBlock').on('click.exportStatBlock', function () { 
-					self.downloadStatBlock(id);
-				});
-				const uploadStat = $(`<div class='upload_button' style="cursor: pointer; position: relative; display:inline-block; color: #ddd;">
-					<span onclick='import_open_template();' title="Upload HTML Statblock" class="material-symbols-outlined" style="font-size: 24px; position: relative; top: 4px;">
-						upload
-					</span>
-					<input accept='.html' id='input_pc_template' type='file' single style='display: none' />
-					</div>
-				`);
-				uploadStat.find('input[type="file"]').change(function(e) {
-					import_pc_template_html(e.target.files, note_text, id);
-				});
-				note_container.find('.title_bar_text').css('display', 'inline-block');
-				note_container.find('.title_bar').prepend(lockStatButton, downloadStat, uploadStat);
-				note_container.find('.title_bar').css({
-					'display': 'flex',
-					'align-items': 'center'
-				});
-				
-				note_container.find('table').each(function() {
-					const $table = $(this);
-					const rowsContainer = $table.find('tbody').length > 0 ? $table.find('tbody') : $table;
-					if (rowsContainer.find('> tr').length > 1) {
-						rowsContainer.find('> tr').each(function() {
-							const $row = $(this);
-							if ($row.find('> .table-row-drag-handle').length === 0) {
-								const $handleCell = $('<td class="table-row-drag-handle" contenteditable="false" aria-hidden="true">⋮⋮</td>');
-								$row.prepend($handleCell);
-							}
-						});
-						if ($table.data('ui-sortable')) {
-							$table.sortable('destroy');
-						}
-						$table.sortable({
-							items: '> tbody > tr, > tr',
-							handle: '.table-row-drag-handle',
-							placeholder: 'ui-sortable-placeholder',
-							update: function() {
-								self.persistStatBlockContent(id, note_text, note_container, {forceSave: true, rescanStatBlock: false});
-							}
-						});
-					}
-					const header = $table.find('th').first().parent().parent();
-					header.find('> tr').each(function() {
-						const $row = $(this);
-						if ($row.find('> .header-spacer').length === 0) {
-							const $handleCell = $('<th class="header-spacer" aria-hidden="true"></td>');
-							$row.prepend($handleCell);
-						}
-					});
-					
-					if($table.next('.add-table-row').length>0)
-						return;
-					const add_table_row = $(`<button class="add-table-row" contenteditable="false">+</button>`);
-					$table.after(add_table_row);
-				});
-			
-
-				note_container.off('pointerdown.addRow, touchstart.addRow').on('pointerdown.addRow, touchstart.addRow', '.add-table-row', function (e) {
-					e.preventDefault();
-					const table = $(e.target).prev('table');
-					const tableBody = $(table).find('tbody');
-					const targetContainer = tableBody.length>0 ? tableBody : table;
-					const newRow = targetContainer.find('>tr:last').clone();
-					newRow.find('td:not(.table-row-drag-handle), th').html('');
-					targetContainer.append(newRow);
-				});
+				self.bindDndSheetTemplateEvents(id, note_text, note_container, {showControls: true});
 			}
 		});	
 		
@@ -2469,11 +3269,16 @@ class JournalManager{
 		if(window.spellIdCache == undefined){
 			window.spellIdCache = {};
 		}
-		const urlRegex = /^(https:\/\/)?(www\.dndbeyond\.com)?\/[a-zA-Z\-]+\/([0-9]+)/g;
-		const urlType = /^(https:\/\/)?(www\.dndbeyond\.com)?\/([a-zA-Z\-]+)/g;
-		let itemId = (url.matchAll(urlRegex).next().value) ? url.matchAll(urlRegex).next().value[3] : 0;
-		let itemType = url.matchAll(urlType).next().value[3];
+		const urlRegex = /^(https:\/\/)?((www\.)?dndbeyond\.com)?\/[a-zA-Z\-]+\/([0-9]+)/g;
+		const urlType = /^(https:\/\/)?((www\.)?dndbeyond\.com)?\/([a-zA-Z\-]+)/g;
+		let itemId = (url.matchAll(urlRegex).next().value) ? url.matchAll(urlRegex).next().value[4] : 0;
+		let itemType = url.matchAll(urlType)?.next()?.value?.[4] ?? false;
 		url = url.toLowerCase();
+		if(itemType == false){
+			noisy_log('invalid url for tooltip', url);
+			return;
+		}
+	
 		if(itemType == 'sources' || itemType == 'compendium')
 			return 
 		itemType = itemType == 'equipment' ? 'adventuring-gear' : itemType
@@ -2784,6 +3589,7 @@ class JournalManager{
 				for(let i=0; i<firstCells.length; i++){
 
 					const cell = $(firstCells[i]);
+					cell.attr('data-avtt-suggestion-type', 'equipment');
 					if(cell.find('a').length > 0) continue;
 					const text = cell.text();
 					if(text.match(/(\[(magicitem|item)\])/gi) || text.trim() === '') continue;
@@ -2842,6 +3648,7 @@ class JournalManager{
 				for(let i=0; i<firstCells.length; i++){
 
 					const cell = $(firstCells[i]);
+					cell.attr('data-avtt-suggestion-type', 'attack');
 					if(cell.find('a').length > 0) continue;
 					const text = cell.text();
 					if(text.match(/(\[(magicitem|item)\])/gi) || text.trim() === '') continue;
@@ -2892,7 +3699,7 @@ class JournalManager{
 				}
 			}
 		}
-		
+
 
 		let pastedButtons = target.find('.avtt-roll-button, [data-rolltype="recharge"], .integrated-dice__container, span[data-dicenotation]');
     	target.find('>style:first-of-type, >style#contentStyles').remove();
@@ -4474,8 +5281,21 @@ class JournalManager{
 				box-sizing: border-box;
 				font-size: 11px;
 				line-height: 1.2;
-
-				
+				@media screen and (max-width: 1023px) {
+					i {
+						box-sizing: initial;
+						cursor: initial;
+						display: initial;
+						float: initial;
+						padding: initial;
+						position: initial;
+						width: initial;
+						height: initial;
+					}
+				}
+				b{
+				 font-weight: 600;
+				}
 
 				.table-row-drag-handle {
 					width: 15px;
@@ -4547,13 +5367,14 @@ class JournalManager{
 				}
 				.main-container {
 					display: flex;
-					gap: 10px;
+					gap: 2px;
 					box-sizing: border-box;
 				}
-				.left-column {
+				.left-column,
+				.small-col {
 					display: flex;
 					flex-direction: column;
-					gap: 10px;
+					gap: 2px;
 					box-sizing: border-box;
 					width: fit-content;
 					max-width:230px;
@@ -4690,11 +5511,12 @@ class JournalManager{
 					color: var(--pc-template-text-muted, #777);
 					font-size: 8px;
 				}
-				.mid-column {
+				.mid-column,
+				.col {
 					flex: 1;
 					display: flex;
 					flex-direction: column;
-					gap: 10px;
+					gap: 2px;
 					box-sizing: border-box;
 				}
 				.combat-stats-grid {
@@ -4707,6 +5529,7 @@ class JournalManager{
 					border: 2px solid var(--pc-template-border-light, #333);
 					padding: 6px;
 					flex: 1;
+					text-align: center;
 					background: var(--pc-template-box-bg, #fdfdfd);
 					border-radius: 4px;
 					box-sizing: border-box;
@@ -4809,21 +5632,23 @@ class JournalManager{
 					overflow-wrap: break-word;
 					color: var(--pc-template-text-color, #111);
 				}
+				.col-container,
 				.page2-grid {
 					display: flex;
-					gap: 10px;
+					gap: 2px;
 					box-sizing: border-box;
 				}
-				.page2-grid > .col {
+				:is(.col-container, .page2-grid) > .col {
 					flex: 1;
 					box-sizing: border-box;
 				}
 				.bio-block,
+				.container-block,
 				.notes-block {
 					border: 1px solid var(--pc-template-border-light, #333);
 					padding: 6px;
 					border-radius: 4px;
-					margin-bottom: 8px;
+					margin-bottom: 2px;
 					background: var(--pc-template-sheet-bg, #fff);
 					box-sizing: border-box;
 					display: flex;
@@ -4839,8 +5664,8 @@ class JournalManager{
 					gap: 8px;
 					box-sizing: border-box;
 				}
-				.trait-box-field {
-					min-height: 60px;
+				.trait-box-field,
+				.box-field {
 					height: auto;
 					border: 1px solid var(--pc-template-border-color, var(--pc-template-border-color, #444));
 					padding: 4px;
@@ -4869,7 +5694,7 @@ class JournalManager{
 					justify-content: flex-start;
 					gap: 5px;
 					box-sizing: border-box;
-					margin-bottom: 4px;
+					margin-bottom: 2px;
 				}
 				.coin-slot {
 					display: flex;
@@ -5025,8 +5850,8 @@ class JournalManager{
 			width: 900,
 			height: 600,
 			position: {
-			   my: "center",
-			   at: "center-200",
+			   my: "center center",
+			   at: "center center",
 			   of: window
 			},
 			open: function(event, ui){
@@ -5079,7 +5904,7 @@ class JournalManager{
 		}, 800)
 
 		const contentStyles = this.content_styles()
-
+		
 		tinyMCE.init({
 			selector: '#' + tmp,
 			menubar: false,
@@ -5101,7 +5926,7 @@ class JournalManager{
 			      { title: 'Read Aloud Text', block: 'div', wrapper: true, classes: 'read-aloud-text' },
 			      { title: 'Stat Block Paper (1 Column)', block: 'div', wrapper: true, classes: 'Basic-Text-Frame stat-block-background one-column-stat' },
 			      { title: 'Stat Block Paper (2 Column)', block: 'div', wrapper: true, classes: 'Basic-Text-Frame stat-block-background' },
-			      { title: 'For DM Eyes Online', block: 'div', wrapper: true, classes: 'dm-eyes-only' },
+			      { title: 'For DM Eyes Only', block: 'div', wrapper: true, classes: 'dm-eyes-only' },
 				  { title: 'DM Screen Chunk - won\'t be auto split into columns when used with the DM Screen', block: 'div', wrapper: true, classes: 'dmScreenChunk' },
 				  { title: 'Add Ability Tracker; Format: "Wild Shape 2"', inline: 'span', wrapper:true, classes: 'note-tracker'},
 			      { title: 'Ignore AboveVTT auto formating', inline: 'span', wrapper: true, classes: 'ignore-abovevtt-formating' },
@@ -5300,8 +6125,8 @@ class JournalManager{
 									<span class="label">XP</span>
 								</div>
 							</div>
-							<div class="main-container">
-								<div class="left-column">
+							<div class="col-container">
+								<div class="small-col">
 									<div class="abilities-table-container">
 										<div class="section-title">Abilities</div>
 										<div class="box-field">
@@ -5473,8 +6298,8 @@ class JournalManager{
 										</div>
 									</div>
 								</div>
-								<div class="mid-column">
-									<div class="combat-stats-grid">
+								<div class="col">
+									<div class="col-container">
 										<div class="combat-metric"><span class="label">Armor Class</span>
 											<div class="metric-val" contenteditable="true">16
 											</div>
@@ -5577,9 +6402,9 @@ class JournalManager{
 											</table>
 										</div>
 									</div>
-									<div class="bio-block">
+									<div class="container-block">
 										<div class="section-title">Spellcasting Notes / Summary</div>
-										<div class="spellcasting-field" contenteditable="true">Spellcasting. Spell save DC 10, +0 to hit
+										<div class="box-field" contenteditable="true">Spellcasting. Spell save DC 10, +0 to hit
 											with spell attacks<br /> <br />Cantrips (at will): acid splash, light, mage hand,
 											prestidigitation<br /><br />1st level (2 slots): detect magic, mage armor<br />
 											<p>&nbsp;</p>
@@ -5587,7 +6412,7 @@ class JournalManager{
 									</div>
 									<div class="container-block">
 										<div class="section-title">Features &amp; Traits</div>
-										<div class="features-field" contenteditable="true">
+										<div class="box-field" contenteditable="true">
 											<table>
 												<tbody class="ui-sortable">
 													<tr>
@@ -5615,20 +6440,20 @@ class JournalManager{
 							</div>
 						</div>
 						<div class="dnd-page">
-							<div class="page2-grid">
+							<div class="col-container">
 								<div class="col">
-									<div class="bio-block">
+									<div class="container-block">
 										<div class="section-title">Magic Item Attunement (3 Slots Available)</div>
-										<div class="attunement-content" contenteditable="true">
+										<div class="box-field" contenteditable="true">
 											<div style="margin-bottom: 2px;"><input checked="checked"
 													type="checkbox" />&nbsp;[magicItem]Cloak of Protection[/magicItem]</div>
 											<div style="margin-bottom: 2px;"><input type="checkbox" /> Empty Slot</div>
 											<div><input type="checkbox" /> Empty Slot</div>
 										</div>
 									</div>
-									<div class="bio-block">
+									<div class="container-block">
 										<div class="section-title">Additional Features &amp; Traits</div>
-										<div class="bio-traits-add" contenteditable="true"><strong>Armor</strong>
+										<div class="box-field" contenteditable="true"><strong>Armor</strong>
 											<div>&bull; Light Armor</div>
 											<div><strong>Weapons</strong></div>
 											<div>&bull; Simple Weapons</div>
@@ -5638,39 +6463,43 @@ class JournalManager{
 											<div>&bull; Common</div>
 										</div>
 									</div>
-									<div class="bio-block">
+									<div class="container-block">
 										<div class="section-title">Character Appearance</div>
-										<div class="bio-appearance" contenteditable="true">&nbsp;</div>
+										<div class="box-field" contenteditable="true">&nbsp;</div>
 									</div>
-									<div class="bio-block">
+									<div class="container-block">
 										<div class="section-title">Character Backstory</div>
-										<div class="bio-backstory" contenteditable="true">&nbsp;</div>
+										<div class="box-field" contenteditable="true">&nbsp;</div>
 									</div>
-									<div class="traits-grid">
-										<div class="bio-block">
-											<div class="section-title">Personality Traits</div>
-											<div class="trait-box-field" contenteditable="true">&nbsp;</div>
+									<div class="col-container">
+										<div class="col">
+											<div class="container-block">
+												<div class="section-title">Personality Traits</div>
+												<div class="box-field" contenteditable="true">&nbsp;</div>
+											</div>
+											<div class="container-block">
+												<div class="section-title">Bonds</div>
+												<div class="box-field" contenteditable="true">&nbsp;</div>
+											</div>
 										</div>
-										<div class="bio-block">
-											<div class="section-title">Ideals</div>
-											<div class="trait-box-field" contenteditable="true">&nbsp;</div>
-										</div>
-										<div class="bio-block">
-											<div class="section-title">Bonds</div>
-											<div class="trait-box-field" contenteditable="true">&nbsp;</div>
-										</div>
-										<div class="bio-block">
-											<div class="section-title">Flaws</div>
-											<div class="trait-box-field" contenteditable="true">&nbsp;</div>
+										<div class="col">
+											<div class="container-block">
+												<div class="section-title">Ideals</div>
+												<div class="box-field" contenteditable="true">&nbsp;</div>
+											</div>
+											<div class="container-block">
+												<div class="section-title">Flaws</div>
+												<div class="box-field" contenteditable="true">&nbsp;</div>
+											</div>
 										</div>
 									</div>
-									<div class="bio-block">
+									<div class="container-block">
 										<div class="section-title">Organization &amp; Allies</div>
-										<div class="bio-allies" contenteditable="true">&nbsp;</div>
+										<div class="box-field" contenteditable="true">&nbsp;</div>
 									</div>
 								</div>
 								<div class="col">
-									<div class="bio-block">
+									<div class="container-block">
 										<div class="section-title">Treasure &amp; Currency</div>
 										<div class="currency-container">
 											<div class="coin-slot">CP:
@@ -5689,7 +6518,7 @@ class JournalManager{
 												<div class="coin-input" contenteditable="true">&nbsp;</div>
 											</div>
 										</div>
-										<div class="treasure-field" contenteditable="true">&nbsp;</div>
+										<div class="box-field" contenteditable="true">&nbsp;</div>
 									</div>
 									<div class="container-block equipment-block">
 										<div class="section-title">Equipment</div>
@@ -5910,9 +6739,267 @@ class JournalManager{
 						</div>
 						<div class="dnd-page">
 							<div class="col">
-								<div class="notes-block">
+								<div class="container-block">
 									<div class="section-title">Notes</div>
-									<div class="notes-field" contenteditable="true">&nbsp;</div>
+									<div class="box-field" contenteditable="true">&nbsp;</div>
+								</div>
+							</div>
+						</div>
+					</div>
+					`
+				},
+				{
+					"title": "Fillable Inventory Sheet",
+					"description": "Adds a fillable inventory sheet to the note. Has limited edit capabilites for Players.",
+					"content": `
+					<style id='contentStyles'>${contentStyles}</style>
+					<div class="dnd-sheet">
+						<div class="dnd-page">
+							<div class="col-container">
+								<div class="col">
+									<div class="container-block">
+										<div class="section-title">Treasure &amp; Currency</div>
+										<div class="currency-container">
+											<div class="coin-slot">CP:
+												<div class="coin-input" contenteditable="true">&nbsp;</div>
+											</div>
+											<div class="coin-slot">SP:
+												<div class="coin-input" contenteditable="true">&nbsp;</div>
+											</div>
+											<div class="coin-slot">EP:
+												<div class="coin-input" contenteditable="true">&nbsp;</div>
+											</div>
+											<div class="coin-slot">GP:
+												<div class="coin-input" contenteditable="true">&nbsp;</div>
+											</div>
+											<div class="coin-slot">PP:
+												<div class="coin-input" contenteditable="true">&nbsp;</div>
+											</div>
+										</div>
+										<div class="box-field" contenteditable="true">&nbsp;</div>
+									</div>
+									<div class="container-block equipment-block">
+										<div class="section-title">Equipment</div>
+										<div class="equipment-field" contenteditable="true">
+											<table>
+												<thead>
+													<tr>
+														<th>Name</th>
+														<th>Weight</th>
+														<th>Qty</th>
+														<th>Cost (gp)</th>
+														<th>Notes</th>
+													</tr>
+												</thead>
+												<tbody>
+													<tr>
+														<td>Cloak of Protection</td>
+														<td>&nbsp;</td>
+														<td>&nbsp;</td>
+														<td>&nbsp;</td>
+														<td>&nbsp;</td>
+													</tr>
+													<tr>
+														<td>Dagger of Venom</td>
+														<td>&nbsp;</td>
+														<td>&nbsp;</td>
+														<td>&nbsp;</td>
+														<td>&nbsp;</td>
+													</tr>
+													<tr>
+														<td>Rope</td>
+														<td>&nbsp;</td>
+														<td>&nbsp;</td>
+														<td>&nbsp;</td>
+														<td>&nbsp;</td>
+													</tr>
+													<tr>
+														<td>Arrows</td>
+														<td>&nbsp;</td>
+														<td>20</td>
+														<td>&nbsp;</td>
+														<td>&nbsp;</td>
+													</tr>
+													<tr>
+														<td>Rations</td>
+														<td>&nbsp;</td>
+														<td>10</td>
+														<td>&nbsp;</td>
+														<td>&nbsp;</td>
+													</tr>
+													<tr>
+														<td>Healer's Kit</td>
+														<td>&nbsp;</td>
+														<td>&nbsp;</td>
+														<td>&nbsp;</td>
+														<td>[track id=healersKit]10[/track] uses remaining</td>
+													</tr>
+													<tr>
+														<td>&nbsp;</td>
+														<td>&nbsp;</td>
+														<td>&nbsp;</td>
+														<td>&nbsp;</td>
+														<td>&nbsp;</td>
+													</tr>
+													<tr>
+														<td>&nbsp;</td>
+														<td>&nbsp;</td>
+														<td>&nbsp;</td>
+														<td>&nbsp;</td>
+														<td>&nbsp;</td>
+													</tr>
+													<tr>
+														<td>&nbsp;</td>
+														<td>&nbsp;</td>
+														<td>&nbsp;</td>
+														<td>&nbsp;</td>
+														<td>&nbsp;</td>
+													</tr>
+													<tr>
+														<td>&nbsp;</td>
+														<td>&nbsp;</td>
+														<td>&nbsp;</td>
+														<td>&nbsp;</td>
+														<td>&nbsp;</td>
+													</tr>
+													<tr>
+														<td>&nbsp;</td>
+														<td>&nbsp;</td>
+														<td>&nbsp;</td>
+														<td>&nbsp;</td>
+														<td>&nbsp;</td>
+													</tr>
+													<tr>
+														<td>&nbsp;</td>
+														<td>&nbsp;</td>
+														<td>&nbsp;</td>
+														<td>&nbsp;</td>
+														<td>&nbsp;</td>
+													</tr>
+													<tr>
+														<td>&nbsp;</td>
+														<td>&nbsp;</td>
+														<td>&nbsp;</td>
+														<td>&nbsp;</td>
+														<td>&nbsp;</td>
+													</tr>
+													<tr>
+														<td>&nbsp;</td>
+														<td>&nbsp;</td>
+														<td>&nbsp;</td>
+														<td>&nbsp;</td>
+														<td>&nbsp;</td>
+													</tr>
+													<tr>
+														<td>&nbsp;</td>
+														<td>&nbsp;</td>
+														<td>&nbsp;</td>
+														<td>&nbsp;</td>
+														<td>&nbsp;</td>
+													</tr>
+													<tr>
+														<td>&nbsp;</td>
+														<td>&nbsp;</td>
+														<td>&nbsp;</td>
+														<td>&nbsp;</td>
+														<td>&nbsp;</td>
+													</tr>
+													<tr>
+														<td>&nbsp;</td>
+														<td>&nbsp;</td>
+														<td>&nbsp;</td>
+														<td>&nbsp;</td>
+														<td>&nbsp;</td>
+													</tr>
+													<tr>
+														<td>&nbsp;</td>
+														<td>&nbsp;</td>
+														<td>&nbsp;</td>
+														<td>&nbsp;</td>
+														<td>&nbsp;</td>
+													</tr>
+													<tr>
+														<td>&nbsp;</td>
+														<td>&nbsp;</td>
+														<td>&nbsp;</td>
+														<td>&nbsp;</td>
+														<td>&nbsp;</td>
+													</tr>
+													<tr>
+														<td>&nbsp;</td>
+														<td>&nbsp;</td>
+														<td>&nbsp;</td>
+														<td>&nbsp;</td>
+														<td>&nbsp;</td>
+													</tr>
+													<tr>
+														<td>&nbsp;</td>
+														<td>&nbsp;</td>
+														<td>&nbsp;</td>
+														<td>&nbsp;</td>
+														<td>&nbsp;</td>
+													</tr>
+													<tr>
+														<td>&nbsp;</td>
+														<td>&nbsp;</td>
+														<td>&nbsp;</td>
+														<td>&nbsp;</td>
+														<td>&nbsp;</td>
+													</tr>
+													<tr>
+														<td>&nbsp;</td>
+														<td>&nbsp;</td>
+														<td>&nbsp;</td>
+														<td>&nbsp;</td>
+														<td>&nbsp;</td>
+													</tr>
+													<tr>
+														<td>&nbsp;</td>
+														<td>&nbsp;</td>
+														<td>&nbsp;</td>
+														<td>&nbsp;</td>
+														<td>&nbsp;</td>
+													</tr>
+													<tr>
+														<td>&nbsp;</td>
+														<td>&nbsp;</td>
+														<td>&nbsp;</td>
+														<td>&nbsp;</td>
+														<td>&nbsp;</td>
+													</tr>
+													<tr>
+														<td>&nbsp;</td>
+														<td>&nbsp;</td>
+														<td>&nbsp;</td>
+														<td>&nbsp;</td>
+														<td>&nbsp;</td>
+													</tr>
+													<tr>
+														<td>&nbsp;</td>
+														<td>&nbsp;</td>
+														<td>&nbsp;</td>
+														<td>&nbsp;</td>
+														<td>&nbsp;</td>
+													</tr>
+													<tr>
+														<td>&nbsp;</td>
+														<td>&nbsp;</td>
+														<td>&nbsp;</td>
+														<td>&nbsp;</td>
+														<td>&nbsp;</td>
+													</tr>
+												</tbody>
+											</table>
+										</div>
+									</div>
+								</div>
+							</div>
+						</div>
+						<div class="dnd-page">
+							<div class="col">
+								<div class="container-block">
+									<div class="section-title">Notes</div>
+									<div class="box-field" contenteditable="true">&nbsp;</div>
 								</div>
 							</div>
 						</div>
@@ -6037,6 +7124,31 @@ class JournalManager{
 			valid_children : '+body[style]',
 			extended_valid_elements: 'svg[name|xmlns|viewBox|width|height|class|fill|stroke],path[d|fill|stroke|stroke-width|class],g[class|fill|stroke|class],circle[cx|cy|r|fill|stroke|class],rect[x|y|width|height|fill|stroke|class],polygon[points|fill|stroke|class]',
 			setup: function (editor) { 
+				editor.on('PreInit', function() {
+					const iframeWin = editor.getWin();
+					if (iframeWin && iframeWin.addEventListener) {
+						const origAdd = iframeWin.addEventListener;
+						iframeWin.addEventListener = function(type, listener, options) {
+							if (type === 'unload') {
+								return origAdd.call(this, 'pagehide', listener, options);
+							}
+							return origAdd.call(this, type, listener, options);
+						};
+					}
+				});
+				editor.on('keydown', function (e) {
+					if (e.key === 'PageUp' || e.key === 'PageDown') {
+						e.preventDefault();
+						e.stopPropagation();
+						const container = $(editor.getContainer()).closest('.note, .ui-dialog-content')
+						const height = container.height() - 80;
+						container[0].scrollBy({
+							top: e.key === 'PageUp' ? -height : height,
+							left: 0,
+							behavior: "smooth",
+						});
+					}
+				});
 				editor.addButton('fontsizeinput', {
 					type: 'container',
 					html: '<input type="number" id="mce-custom-font-size" style="width: 40px;height: 16px;text-align:right;padding: 4px 1px;" placeholder="px"> px',
@@ -6431,6 +7543,7 @@ class JournalManager{
 			}
 		});
 		note.parent().css('height', '600px');		
+		note.dialog("option", "position", { my: "center center", at: "center center", of: window });
 	}
 }
 
@@ -6603,6 +7716,12 @@ function render_source_chapter_in_iframe(url) {
 			background: url(https://dndbeyond.com/content/1-0-3132-0/skins/waterdeep/images/character-sheet/loading-ring.svg) no-repeat;
 			background-size: contain;
 			content: '';
+		}
+		svg.ritual-icon-svg {
+			width: 10px;
+			height: auto;
+			margin-left:3px;
+			vertical-align:middle;
 		}
 		button.avtt-roll-button,
 		.avtt-ability-roll-button{

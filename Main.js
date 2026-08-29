@@ -16,10 +16,13 @@ window.onbeforeunload = function(event)
 };
 
 function getGameLogButton() {
-	let btn = $("div.ct-character-header__group--game-log.ct-character-header__group--game-log-last, [data-original-title='Game Log'] button, button[class*='-gamelog-button'], div[class*='campaignButtonGroup'][class*='GameLogButton']");
+	let btn = $("div.ct-character-header__group--game-log.ct-character-header__group--game-log-last, [data-original-title='Game Log'] button, button[class*='-gamelog-button'], div[class*='campaignButtonGroup'][class*='GameLogButton'], [aria-roledescription='Game Log'][role='button']");
 	if(btn.length === 0){
 		// Fallback SVG selector
 		btn = $(`[d='M243.9 7.7c-12.4-7-27.6-6.9-39.9 .3L19.8 115.6C7.5 122.8 0 135.9 0 150.1V366.6c0 14.5 7.8 27.8 20.5 34.9l184 103c12.1 6.8 26.9 6.8 39.1 0l184-103c12.6-7.1 20.5-20.4 20.5-34.9V146.8c0-14.4-7.7-27.7-20.3-34.8L243.9 7.7zM71.8 140.8L224.2 51.7l152 86.2L223.8 228.2l-152-87.4zM48 182.4l152 87.4V447.1L48 361.9V182.4zM248 447.1V269.7l152-90.1V361.9L248 447.1z']`).closest('[role="button"]');
+	}
+	if(btn.length === 0){
+		btn = $(`[d="M213.3 128H416V64L213.3 64l-32 32 32 32zM190.6 41.4c6-6 14.1-9.4 22.6-9.4H416c17.7 0 32 14.3 32 32v64c0 17.7-14.3 32-32 32H213.3c-8.5 0-16.6-3.4-22.6-9.4l-43.3-43.3c-6.2-6.2-6.2-16.4 0-22.6l43.3-43.3zM64 128a32 32 0 1 1 0-64 32 32 0 1 1 0 64zm0 160a32 32 0 1 1 0-64 32 32 0 1 1 0 64zM32 416a32 32 0 1 1 64 0 32 32 0 1 1 -64 0zm181.3 32H416V384H213.3l-32 32 32 32zm-22.6-86.6c6-6 14.1-9.4 22.6-9.4H416c17.7 0 32 14.3 32 32v64c0 17.7-14.3 32-32 32H213.3c-8.5 0-16.6-3.4-22.6-9.4l-43.3-43.3c-6.2-6.2-6.2-16.4 0-22.6l43.3-43.3zM181.3 256l32 32H480V224l-266.7 0-32 32zm-33.9-11.3l43.3-43.3c6-6 14.1-9.4 22.6-9.4H480c17.7 0 32 14.3 32 32v64c0 17.7-14.3 32-32 32H213.3c-8.5 0-16.6-3.4-22.6-9.4l-43.3-43.3c-6.2-6.2-6.2-16.4 0-22.6z]`).closest('[role="button"]');
 	}
 	return btn;
 }
@@ -751,17 +754,22 @@ async function popout_all_selected_token_stat(){
 	const tokens = [];
 	forSelTokens((token) => {
 		if (token.options.statBlock) {
-			const {customStatBlock, pcURL} = token.getCustomPcUrl();
-			if (pcURL || customStatBlock) return;
+			const {pcURL} = token.getCustomPcUrl();
+			if (pcURL) return;
 		}
-		if(token.options.monster){
+		if(token.isMonster()){
 			fetchMonsters.push(token.options.monster)
 		}
 		tokens.push(token);
 
 	})
-	fetch_and_cache_monsters(fetchMonsters, function () {
-		tokens.every(async (token) => {
+	const promiseMonsters = new Promise((resolve) => {
+		fetch_and_cache_monsters(fetchMonsters, function () {
+			resolve();
+		});
+	});
+	promiseMonsters.then(() => {
+			tokens.every(async (token) => {
 			let container = $(`<div class='popout-prep'></div>`);
 			if(token.isPlayer()) return;
 
@@ -781,7 +789,15 @@ async function popout_all_selected_token_stat(){
 			}
 			await async_sleep(1);
 			const windowName = `${token.options.name}_${token.options.id}`.replaceAll(/(\r\n|\n|\r)/gi, "").trim();
-			popoutWindow(windowName, container.find(".avtt-stat-block-container"));
+			const isPcTempalate = container.find('.dnd-sheet');
+			const width = isPcTempalate.length > 0 ? 800 : undefined;
+			popoutWindow(windowName, container.find(".avtt-stat-block-container"), width);
+			const popoutBody = $(window.childWindows[windowName].document).find("body");
+			const popoutStatBlock = popoutBody.find(".avtt-stat-block-container").first();
+			if(popoutStatBlock.find('.dnd-sheet').length > 0){
+				const noteId = popoutStatBlock.attr('data-stat-id') || token.options.statBlock;
+				window.JOURNAL.bindDndSheetTemplateEvents(noteId, popoutStatBlock, popoutBody, {tokenId: token.options.id, showControls: false});
+			}
 			$(window.childWindows[windowName].document).find(".avtt-roll-button").on("contextmenu", function (contextmenuEvent) {
 				$(window.childWindows[windowName].document).find("body").append($("div[role='presentation']").clone(true, true));
 				let popoutContext = $(window.childWindows[windowName].document).find(".dcm-container");
@@ -801,7 +817,7 @@ async function popout_all_selected_token_stat(){
 			close_player_monster_stat_block();
 		});
 	});
-	
+
 }
 function open_selected_token_stat() {
 	const selectedTokens = window.CURRENTLY_SELECTED_TOKENS;
@@ -1028,8 +1044,14 @@ function build_draggable_monster_window(tokenId) {
 	}
 	popoutButton.off('click.popout').on('click.popout', function() {
 		let name = $("#resizeDragMon .avtt-stat-block-container .mon-stat-block__name-link").text();
-		const windowName = `${token?.options?.name ? token.options.name : name}_${tokenId ? tokenId : ''}`.replaceAll(/(\r\n|\n|\r)/gi, "").trim();
-		popoutWindow(windowName, $("#resizeDragMon .avtt-stat-block-container"));
+		const windowName = `${token?.options?.name ? token.options.name : name}_${tokenId ? tokenId : ''}`.replaceAll(/(\r\n|\n|\r)/gi, "").trim();	
+		popoutWindow(windowName, $("#resizeDragMon .avtt-stat-block-container"), $("#resizeDragMon").width(), $("#resizeDragMon").height());
+		const popoutBody = $(window.childWindows[windowName].document).find("body");
+		const popoutStatBlock = popoutBody.find(".avtt-stat-block-container").first();
+		if(popoutStatBlock.find('.dnd-sheet').length > 0){
+			const noteId = popoutStatBlock.attr('data-stat-id') || token?.options?.statBlock;
+			window.JOURNAL.bindDndSheetTemplateEvents(noteId, popoutStatBlock, popoutBody, {tokenId, showControls: false});
+		}
 		$(window.childWindows[windowName].document).find(".avtt-roll-button").on("contextmenu", function (contextmenuEvent) {
 			$(window.childWindows[windowName].document).find("body").append($("div[role='presentation']").clone(true, true));
 			let popoutContext = $(window.childWindows[windowName].document).find(".dcm-container");
@@ -1059,6 +1081,8 @@ function build_draggable_monster_window(tokenId) {
 		addClasses: false,
 		handles: "all",
 		containment: "#windowContainment",
+		distance: 5,
+		cancel: 'input, [contenteditable]',
 		start: function() {
 			$("#resizeDragMon, .note:has(iframe) form .mce-container-body, #sheet").append($('<div class="iframeResizeCover"></div>'));
 		},
@@ -1073,13 +1097,14 @@ function build_draggable_monster_window(tokenId) {
 		addClasses: false,
 		scroll: false,
 		containment: "#windowContainment",
+		distance: 5,
 		start: function() {
 			$("#resizeDragMon, .note:has(iframe) form .mce-container-body, #sheet").append($('<div class="iframeResizeCover"></div>'));
 		},
 		stop: function() {
 			$('.iframeResizeCover').remove();
 		},
-		cancel: '[contenteditable]'
+		cancel: 'input, [contenteditable]'
 	});
 	minimize_player_monster_window_double_click(container);
 
@@ -1443,59 +1468,6 @@ function close_splash() {
 
 
 
-var DDB_WS_OBJ = null;
-var DDB_WS_FORCE_RECONNECT_LOCK = false; // Best effort (not atomic) - ensure function is called only once at a time
-/**
- * Attempts to force DDBs WebSocket to re-connect.
- * @returns Bool false - wasn't able to force / no need
- * @returns Bool true - was able to attempt force reconnec
- */
-function forceDdbWsReconnect() {
-	try {
-		if (DDB_WS_FORCE_RECONNECT_LOCK) {
-			console.log("forceDdbWsReconnect is already locked!");
-			return false;
-		}
-
-		if (window.navigator && !window.navigator.onLine) {
-			console.log("No internet connection, cannot re-connect to DDBs WebSocket.");
-			return false;
-		}
-
-		DDB_WS_FORCE_RECONNECT_LOCK = true;
-
-		const key = Symbol.for('@dndbeyond/message-broker-lib');
-		if (key) {
-			DDB_WS_OBJ = window[key];
-		}
-
-		if ((DDB_WS_OBJ && DDB_WS_OBJ.status == 'disconnected') || (window.MB.ws.readyState != window.MB.ws.OPEN)) {
-			console.log("Detected that DDBs WebSocket is disconnected - attempting to force reconnect.");
-			DDB_WS_OBJ.reset();
-			DDB_WS_OBJ.connect();
-			get_cobalt_token(function(token) {
-				window.MB.loadWS(token, null);
-
-				// Wait 8 seconds before checking again if the websocket is connected
-				setTimeout(function() {
-					if (DDB_WS_OBJ.status == 'open') {
-						console.log("Managed to reconnect DDBs WebSocket successfully!");
-					}
-					DDB_WS_FORCE_RECONNECT_LOCK = false;
-				}, 8000);
-			});
-
-			return true;
-		}
-
-		DDB_WS_FORCE_RECONNECT_LOCK = false;
-
-		return false;
-	} catch(e) {
-		console.log("forceDdbWsReconnect error: " + e);
-		DDB_WS_FORCE_RECONNECT_LOCK = false;
-	}
-}
 
 /**
  * Register event to minimize/restore a player window when double clicking the DOMObject.
@@ -3167,6 +3139,26 @@ function init_help_menu() {
 							<dd>Prev creature in combat</dd>
 						</dl>
 						<dl>
+							<dt>Drag select box up</dt>
+							<dd>Select tokens fully in the select box.</dd>
+						</dl>
+						<dl>
+							<dt>Drag select box down</dt>
+							<dd>Select tokens partially in the select box.</dd>
+						</dl>
+						<dl>
+							<dt>Drag eye icon to rotate (above token)</dt>
+							<dd>Rotate selected tokens to face the eye. Hold ${getShiftKeyName()} to snap to half grid increments.</dd>
+						</dl>
+						<dl>
+							<dt>Drag aoe origin icon (top right of token)</dt>
+							<dd>Rotate selected AoE around it\'s origin point. Hold ${getShiftKeyName()} to snap to half grid increments.</dd>
+						</dl>
+						<dl>
+							<dt>Drag center point icon to rotate (top right of token)</dt>
+							<dd>Rotate selected tokens as a group around the center point. Hold ${getShiftKeyName()} to snap to half grid increments.</dd>
+						</dl>
+						<dl>
 							<dt>Double Click on Scene/Token</dt>
 							<dd>Ping/highlight location or token to all players. The DM has a quick toggle (right side) for centering player views on scene ping.</dd>
 						</dl>
@@ -3183,7 +3175,7 @@ function init_help_menu() {
 							<dd>Move selected tokens in direction of arrow key</dd>
 						</dl>
 						<dl>
-							<dt>Shift+Arrow Keys</dt> 
+							<dt>${getShiftKeyName()}+Arrow Keys</dt> 
 							<dd>Rotate selected tokens to face in direction of arrow key</dd>
 						</dl>
 						<dl>
@@ -3439,28 +3431,6 @@ function init_help_menu() {
 	});
 }
 
-/**
- * Load dice configuration from DDB.
- */
-function init_my_dice_details(){
-	get_cobalt_token(function (token) {
-		window.ajaxQueue.addRequest({
-			type: 'GET',
-			url: "https://dice-service.dndbeyond.com/diceuserconfig/v1/get",
-			contentType: "application/json; charset=utf-8",
-			dataType: 'json', // added data type
-			beforeSend: function (xhr) {
-				xhr.setRequestHeader('Authorization', 'Bearer ' + token);
-			},
-			xhrFields: {
-				withCredentials: true
-			},
-			success: function(res) {
-				window.mydice = res
-			}
-    	});
-	});
-}
 
 /**
  * Gathers browser information from User Agent.
@@ -3807,7 +3777,7 @@ function show_sidebar(dispatchResize = true) {
 	} else {
 		let sidebar = is_characters_page() ? $(".ct-sidebar__portal") : $(".sidebar--right");
 		sidebar.css("transform", "translateX(0px)");
-		$('#combat_carousel_container.tracker-list').toggleClass('sidebarClosed', false)
+		$('#combat_carousel_container.tracker-list, .boss-hp-bar').toggleClass('sidebarClosed', false)
 	}
 
 	if (is_characters_page()) {
@@ -3982,7 +3952,7 @@ function hide_sidebar(triggerResize = true) {
 	} else {
 		let sidebar = is_characters_page() ? $(".ct-sidebar__portal") : $(".sidebar--right");
 		sidebar.css("transform", `translateX(${get_sidebar_width()}px)`);
-		$('#combat_carousel_container.tracker-list').toggleClass('sidebarClosed', true)
+		$('#combat_carousel_container.tracker-list, .boss-hp-bar').toggleClass('sidebarClosed', true)
 	}
 
 	if (is_characters_page()) {

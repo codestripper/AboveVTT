@@ -15,6 +15,19 @@
 			"js": [
 				"Load.js"
 			]
+		},
+		{
+			"matches": [
+				"https://www.dndbeyond.com/campaigns/*",
+				"https://www.dndbeyond.com/characters*"
+			],
+			"exclude_matches": [
+				"https://www.dndbeyond.com/campaigns/join/*"
+			],
+			"js": [
+				"LoadStart.js"
+			],
+			"run_at": "document_start"
 		}
 	],
 	"host_permissions": [
@@ -98,13 +111,14 @@
 			"PeerManager.js",
 			"PeerCommunication.js",
 			"peerVideo.js",
-			"peerDice.js",
 			"onedrive/*",
 			"WeatherOverlay.js",
 			"iframe.html",
 			"avttS3Upload.js",
 			"loadFrame.js",
-			"Load.js"	
+			"Load.js",
+			"LoadStart.js",
+			"DDBMb.js"
 			],
 			"matches": [ "*://*.dndbeyond.com/*" ]	
 		}

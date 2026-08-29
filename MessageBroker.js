@@ -233,7 +233,7 @@ const debounceHandleInjected = mydebounce(() => {
 			}
 		});
 		if(!found && $('.ct-game-log-pane, [class*="styles_gameLogPane"]').length>0){
-			console.warn(`couldn't find a message matching ${JSON.stringify(current)}`);
+			noisy_log(`couldn't find a message matching ${JSON.stringify(current)}`);
 			// It's possible that we could lose messages due to this not being here, but
 			// if we push the message here, we can end up in an infinite loop.
 			// We may need to revisit this and do better with error handling if we end up missing too many messages.
@@ -252,7 +252,6 @@ function setupMBIntervals(){
 	if(window.pingInterval!=undefined)
 		clearInterval(window.pingInterval);
 	window.pingInterval = setInterval(function() {
-		window.MB.sendPing();
 		window.MB.sendAbovePing();
 		checkForExportRemind();
 	}, 480000);
@@ -364,65 +363,6 @@ class MessageBroker {
 				}, Math.min(10000,2**window.onCloseNumberPerPopup*window.reconnectDelay));
 			}
 		};
-	}
-
-	loadWS(token, callback = null) {
-
-		if (callback)
-			this.callbackQueue.push(callback);
-
-		console.log("LOADING WS: There Are " + this.callbackQueue.length + " elements in the queue");
-		if (this.loadingWS || this.ws?.readyState == 1) {
-			console.log("ALREADY LOADING A WS");
-			return;
-		}
-		let self = this;
-		let url = this.url;
-		let userid = this.userid;
-		let gameid = this.gameid;
-		if (!gameid) 
-			return;
-		
-		this.loadingWS = true;
-
-		console.log("STARTING MB WITH TOKEN");
-
-		this.ws = new WebSocket(url + "?gameId=" + gameid + "&userId=" + userid + "&stt=" + token);
-
-		this.ws.onmessage=this.onmessage;
-
-
-		this.ws.onerror = function() {
-			self.loadingWS = false;
-			self.ws.close();
-		};
-
-		this.ws.onopen = function() {
-			self.loadingWS = false;
-			let cb;
-			console.log('Empting callback queue list');
-			while (cb = self.callbackQueue.shift()) {
-				cb();
-			};
-		};
-		this.ws.onclose = function() {
-			if(is_gamelog_popout())
-				return;
-			if(self.ddbReconnectTimeout != undefined){
-				clearTimeout(self.ddbReconnectTimeout);
-			}	
-			console.log('Attempting reconnect to DDB Websocket');
-			if(window.reconnectAttemptDDBWs == undefined){
-				window.reconnectAttemptDDBWs = 0;
-			}
-			window.reconnectAttemptDDBWs++;
-			self.ddbReconnectTimeout = setTimeout(function() {
-				get_cobalt_token(function(token) {
-					self.loadWS(token, null);
-				});
-			}, Math.min(10000,2**window.reconnectAttemptDDBWs*window.reconnectDelay));
-		};
-		
 	}
 
 	/// this will find all pending messages and reprocess them if needed. This is necessary on the characters page because DDB removes/injects the gamelog frequently. Any time they inject it, this gets called
@@ -580,9 +520,7 @@ class MessageBroker {
 			document.addEventListener('keydown', initNextTurnAudio, { once: true });
 		}
 
-		
-
-		this.onmessage = async function(event,tries=0) {
+		this.ddbonmessage = function(event) {
 			if (event.data == "pong")
 				return;
 			if (event.data == "ping")
@@ -595,62 +533,9 @@ class MessageBroker {
 				console.error("MB.onmessage failed to handle", event, parsingError);
 				return;
 			}
-			if (window.location.search.includes("popoutgamelog=true") && msg.eventType != "dice/roll/pending" && msg.eventType != "dice/roll/fulfilled")
+			if ((!is_abovevtt_page() || window.location.search.includes("popoutgamelog=true")) && msg.eventType != "dice/roll/pending" && msg.eventType != "dice/roll/fulfilled")
 				return;
-			console.log(msg.eventType);
-			
-			if(msg.sender){ // THIS MESSAGE CONTAINS DATA FOR TELEMEMTRY (from AboveWS)
-				if(msg.sender==self.mysenderid){
-					self.stats.reflected++;
-					console.warn("WARNING. WE RECEIVED BACK OUR OWN MESSAGE - IGNORING");
-					return;
-				}
 
-				if(self.stats.peers[msg.sender]){
-					let shouldbethis=self.stats.peers[msg.sender].sequence+1;
-					if(msg.sequence==shouldbethis){
-						self.stats.peers[msg.sender].sequence=msg.sequence;
-						if(tries>0){
-							console.log("FIXED");
-							self.stats.peers[msg.sender].future_fixed++;
-						}
-					}
-					if(msg.sequence > shouldbethis){
-						if(tries==0)
-							self.stats.peers[msg.sender].future++;
-						
-						noisy_log("MSG in the future. (was expecting "+shouldbethis+" but we got "+msg.sequence+ " retries :" + tries);
-						if(tries<20){
-							setTimeout(self.onmessage,300,event,tries+1);
-							noisy_log("trying to fix");
-							return;
-						}
-						else{
-							console.error("lost a message");
-							self.stats.peers[msg.sender].sequence=msg.sequence;
-						}
-					}
-					if(msg.sequence < shouldbethis){
-							if((msg.sequence - self.stats.peers[msg.sender].first_sequence) > 10){
-								self.stats.peers[msg.sender].past++;
-								noisy_log(0, "Sequence message is in the past. We should try to recover");
-							}
-							else{
-								noisy_log("message in the past, but the che connection is new.. so.. I guess it's ok");
-							}
-							
-					}
-				}
-				else{
-					self.stats.peers[msg.sender]={
-							future:0,
-							future_fixed:0,
-							past:0,
-							sequence: msg.sequence,
-							first_sequence: msg.sequence,
-					}
-				}
-			}
 			if(msg.eventType == "dice/roll/pending") {
 				// check for injected_data!
 				if (msg.data.injected_data) {
@@ -683,7 +568,7 @@ class MessageBroker {
 									continue;
 								}
 								if (roll.diceNotation.set[j].dice[k].dieValue >= parseInt(roll.diceNotation.set[j].dice[k].dieType.replace('d', '')) - reduceCrit && roll.result.values.includes(roll.diceNotation.set[j].dice[k].dieValue)) {
-									if (roll.rollKind == 'advantage') {
+									if (roll.diceNotation.set[j].dice.length>1 && roll.rollKind == 'advantage') {
 										if (k > 0 && roll.diceNotation.set[j].dice[k - 1].dieValue <= roll.diceNotation.set[j].dice[k].dieValue) {
 											critSuccess[i] = true;
 										}
@@ -691,7 +576,7 @@ class MessageBroker {
 											critSuccess[i] = true;
 										}
 									}
-									else if (roll.rollKind == 'disadvantage' && roll.diceNotation.set[j].dice[1].dieValue == roll.diceNotation.set[j].dice[0].dieValue) {
+									else if (roll.diceNotation.set[j].dice.length>1 && roll.rollKind == 'disadvantage' && roll.diceNotation.set[j].dice[1].dieValue == roll.diceNotation.set[j].dice[0].dieValue) {
 										critSuccess[i] = true;
 									}
 									else if (roll.rollKind != 'disadvantage') {
@@ -699,7 +584,7 @@ class MessageBroker {
 									}
 								}
 								else if (roll.diceNotation.set[j].dice[k].dieValue == 1 && roll.result.values.includes(roll.diceNotation.set[j].dice[k].dieValue)) {
-									if (roll.rollKind == 'disadvantage') {
+									if (roll.diceNotation.set[j].dice.length>1 && roll.rollKind == 'disadvantage') {
 										if (k > 0 && roll.diceNotation.set[j].dice[k - 1].dieValue >= roll.diceNotation.set[j].dice[k].dieValue) {
 											critFail[i] = true;
 										}
@@ -707,7 +592,7 @@ class MessageBroker {
 											critFail[i] = true;
 										}
 									}
-									else if (roll.rollKind == 'advantage' && roll.diceNotation.set[j].dice[1].dieValue == roll.diceNotation.set[j].dice[0].dieValue) {
+									else if (roll.diceNotation.set[j].dice.length>1 && roll.rollKind == 'advantage' && roll.diceNotation.set[j].dice[1].dieValue == roll.diceNotation.set[j].dice[0].dieValue) {
 										critFail[i] = true;
 									}
 									else if (roll.rollKind != 'advantage') {
@@ -721,7 +606,7 @@ class MessageBroker {
 
 					setTimeout(function () {
 						let target;
-						let listItems = $(`ol>li[class*='GameLogEntry']`);
+						let listItems = $(`ol>li[class*='GameLogEntry']:not(:has([class*='Pending'], .damageButtonsContainer))`);
 						for (let i = 0; i < listItems.length; i++) {
 							if ($(listItems[i]).find('[class*="Pending"]').length > 0)
 								continue;
@@ -967,7 +852,108 @@ class MessageBroker {
 
 				}
 				return;
+			} else if (msg.eventType == "dice/roll/deferred") {
+				const isPlayer = is_characters_page();
+				if(isPlayer || document.hidden)
+					return;
+				const ddb3dDiceShareToggle = get_avtt_setting_value("streamDiceRolls");
+				const showSelfRoll = !is_spectator_page() && msg.messageTarget == `${window.myUser}`;
+				const showDMRoll = window.DM && (msg.messageTarget == 'dm' || msg.messageTarget == 'dungeonmaster');
+				if(ddb3dDiceShareToggle == true && (msg.messageTarget == window.gameId || showSelfRoll || showDMRoll)){
+					get_active_worker_keys().forEach(key => {
+						if(key.includes('physics')){
+							requestAnimationFrame(() => {
+								window.ActiveWorkers[key].postMessage({
+									type: "dice/roll/deferred",
+									payload: {
+										...msg,
+										eventType: "dice/roll/deferred"
+									}
+								});
+							});
+						} 
+					});
+				}
+				return;
+			} else if(msg.eventType == "character-sheet/item-shared/fulfilled"){
+				DDBApi.debounceGetPartyInventory();
+				return;
+			} else if(msg.eventType == "character-sheet/character-update/fulfilled") {
+				noisy_log('update_pc character-sheet/character-update/fulfilled', msg);
+				update_pc_with_api_call(msg.data?.characterId);
+			} 
+		};
+
+		this.onmessage = async function(event,tries=0) {
+			if (event.data == "pong")
+				return;
+			if (event.data == "ping")
+				return;
+
+			let msg = {};
+			try {
+				msg = JSON.parse(event.data);
+			} catch (parsingError) {
+				console.error("MB.onmessage failed to handle", event, parsingError);
+				return;
 			}
+			if (window.location.search.includes("popoutgamelog=true") && msg.eventType != "dice/roll/pending" && msg.eventType != "dice/roll/fulfilled")
+				return;
+			console.log(msg.eventType);
+			
+			if(msg.sender){ // THIS MESSAGE CONTAINS DATA FOR TELEMEMTRY (from AboveWS)
+				if(msg.sender==self.mysenderid){
+					self.stats.reflected++;
+					console.warn("WARNING. WE RECEIVED BACK OUR OWN MESSAGE - IGNORING");
+					return;
+				}
+
+				if(self.stats.peers[msg.sender]){
+					let shouldbethis=self.stats.peers[msg.sender].sequence+1;
+					if(msg.sequence==shouldbethis){
+						self.stats.peers[msg.sender].sequence=msg.sequence;
+						if(tries>0){
+							console.log("FIXED");
+							self.stats.peers[msg.sender].future_fixed++;
+						}
+					}
+					if(msg.sequence > shouldbethis){
+						if(tries==0)
+							self.stats.peers[msg.sender].future++;
+						
+						noisy_log("MSG in the future. (was expecting "+shouldbethis+" but we got "+msg.sequence+ " retries :" + tries);
+						if(tries<20){
+							setTimeout(self.onmessage,300,event,tries+1);
+							noisy_log("trying to fix");
+							return;
+						}
+						else{
+							console.error("lost a message");
+							self.stats.peers[msg.sender].sequence=msg.sequence;
+						}
+					}
+					if(msg.sequence < shouldbethis){
+							if((msg.sequence - self.stats.peers[msg.sender].first_sequence) > 10){
+								self.stats.peers[msg.sender].past++;
+								noisy_log(0, "Sequence message is in the past. We should try to recover");
+							}
+							else{
+								noisy_log("message in the past, but the che connection is new.. so.. I guess it's ok");
+							}
+							
+					}
+				}
+				else{
+					self.stats.peers[msg.sender]={
+							future:0,
+							future_fixed:0,
+							past:0,
+							sequence: msg.sequence,
+							first_sequence: msg.sequence,
+					}
+				}
+			}
+
 			// WE NEED TO IGNORE CERTAIN MESSAGE IF THEY'RE NOT FROM THE CURRENT SCENE
 			if(window.CURRENT_SCENE_DATA == undefined || (msg.sceneId && window.CURRENT_SCENE_DATA && msg.sceneId !== window.CURRENT_SCENE_DATA.id && [
 				"custom/myVTT/delete_token",
@@ -982,10 +968,8 @@ class MessageBroker {
 				noisy_log("skipping msg from a different scene");
 				return;
 			}
-			if(msg.eventType == "character-sheet/item-shared/fulfilled"){
-				DDBApi.debounceGetPartyInventory();
-				return;
-			} else if (msg.eventType == "custom/myVTT/token" && (msg.sceneId == window.CURRENT_SCENE_DATA.id || msg.data.id in window.TOKEN_OBJECTS)) {
+
+			if (msg.eventType == "custom/myVTT/token" && (msg.sceneId == window.CURRENT_SCENE_DATA.id || msg.data.id in window.TOKEN_OBJECTS)) {
 				self.handleToken(msg);
 			} else if(msg.eventType=="custom/myVTT/delete_token"){
 				let tokenid=msg.data.id;
@@ -1010,6 +994,19 @@ class MessageBroker {
 			} else if (msg.eventType == "custom/myVTT/campaignData"){
 				window.AVTT_CAMPAIGN_INFO = msg.data;
 				window.MB.checkHideSceneFromPlayers();
+			} else if(msg.eventType == "custom/myVTT/aoeStyles"){
+				if(!window.DM){
+					window.AOE_STYLE_TOKENS = msg.data?.aoeStyleTokens || {};
+					window.AOE_STYLE_TOKEN_TILING = msg.data?.aoeStyleTokenTiling || {};
+					window.AOE_STYLE_TOKEN_OPACITY = msg.data?.aoeStyleTokenOpacity || {};
+					window.AOE_STYLE_TOKEN_ANIMATION = msg.data?.aoeStyleTokenAnimation || {};
+					window.AOE_STYLE_TOKEN_BORDER = msg.data?.aoeStyleTokenBorder || {};
+					window.AOE_STYLE_TOKEN_VIDEO = msg.data?.aoeStyleTokenVideo || {};
+					window.AOE_STYLE_ORDER = msg.data?.aoeStyleOrder || [];
+					if(typeof refresh_aoe_style_menu === "function"){
+						refresh_aoe_style_menu();
+					}
+				}
 			} else if(msg.eventType == "custom/myVTT/place-extras-token"){
 				if(window.DM){
 					let left = parseInt(msg.data.centerView.x);
@@ -1108,9 +1105,6 @@ class MessageBroker {
 				self.handleAudioPlayingSync(msg);
 			} else if(msg.eventType == ('custom/myVTT/character-update')){
 				update_pc_with_data(msg.data.characterId, msg.data.pcData);
-			} else if(msg.eventType == ('character-sheet/character-update/fulfilled')) {
-				noisy_log('update_pc character-sheet/character-update/fulfilled', msg);
-				update_pc_with_api_call(msg.data?.characterId);
 			} else if (msg.eventType == "custom/myVTT/reveal") {
 				window.REVEALED.push(msg.data);
 				redraw_fog();
@@ -1275,31 +1269,42 @@ class MessageBroker {
 						window.TOKEN_OBJECTS[msg.data.id].place();			
 					}			
 					const openNote = $(`.note[data-id='${msg.data.id}']`);
-					// If the 'Open' button is clicked OR the note is already opened by a player and it is saved 
-					// by the DM, the note gets refreshed.
+					const openMainNote = openNote.filter(function(){
+						const noteWindow = $(this).closest('.resize_drag_window');
+						return noteWindow.length === 0 || noteWindow.css('display') != 'none';
+					});
+					const notePopout = window.JOURNAL.findNotePopoutWindow(msg.data.id);
+
 					let currScroll = 0;
-					if(openNote.length>0){
-						const targetRescan = openNote.find('.avtt-stat-block-container, .note-text').first();
+					if(openMainNote.length>0){
+						const targetRescan = openMainNote.find('.avtt-stat-block-container, .note-text').first();
 						currScroll = targetRescan[0].scrollTop;
 					}
+					if(notePopout){
+						const popoutNoteText = $(notePopout.childWindow.document).find(`div.note[data-id='${msg.data.id}'] .avtt-stat-block-container, div.note[data-id='${msg.data.id}'] .note-text`).first();
+						const popoutScroll = popoutNoteText.length > 0 ? popoutNoteText[0].scrollTop : 0;
+						await window.JOURNAL.updateNotePopout(msg.data.id, popoutScroll);
+					}
 
-					if (msg.data.popup == true || (msg.data.popup == undefined && openNote.length != 0)){
-						const minimized = openNote.siblings('.minimized').length > 0 && !msg.data.popup;
+					if (openMainNote.length != 0 || (msg.data.popup == true && !notePopout)){
+						const minimized = openMainNote.siblings('.minimized').length > 0 && !msg.data.popup;
 						window.JOURNAL.display_note(msg.data.id, undefined, currScroll);
 						if(minimized) $(`.note[data-id='${msg.data.id}']`).siblings('.title_bar').dblclick();
 					} else if (msg.data.popup == false) {
 						openNote.remove();
+						if(notePopout)
+							closePopout(notePopout.name);
 					}
 					
 					
 
-					if(window.JOURNAL.notes[msg.data.id].abilityTracker && openNote.length>0){
+					if(window.JOURNAL.notes[msg.data.id].abilityTracker && openMainNote.length>0){
 						for(let i in window.JOURNAL.notes[msg.data.id].abilityTracker){
-							openNote.find(`input[data-tracker-key='${i}']`).val(window.JOURNAL.notes[msg.data.id].abilityTracker[i])
+							openMainNote.find(`input[data-tracker-key='${i}']`).val(window.JOURNAL.notes[msg.data.id].abilityTracker[i])
 						}
 					}
 
-					if(window.JOURNAL.notes[msg.data.id].pins && openNote.length>0){
+					if(window.JOURNAL.notes[msg.data.id].pins && openMainNote.length>0){
 						for(let i in window.JOURNAL.notes[msg.data.id].pins){
 							$(`div.note[data-id='${msg.data.id}'] .note-pin[data-id='${i}']`).css({
 								'top': `${parseFloat(window.JOURNAL.notes[msg.data.id].pins[i].y) - 43}px`,
@@ -1307,14 +1312,27 @@ class MessageBroker {
 							})	
 						}
 					}
-
+					
+					const statBlockPopout = window.JOURNAL.findStatBlockPopoutWindow(msg.data.id);
+					if(statBlockPopout){
+						const popoutStatBlock = $(statBlockPopout.childWindow.document).find(`.custom-stat-block[data-stat-id="${msg.data.id}"]`).first();
+						const popoutScroll = popoutStatBlock.length > 0 ? popoutStatBlock[0].scrollTop : 0;
+						await window.JOURNAL.updateStatBlockPopout(msg.data.id, msg.data.tokenId, popoutScroll);
+					}
 					const openStatBlock = $(`.custom-stat-block[data-stat-id="${msg.data.id}"]`).closest('.moveableWindow:not(.hideMon)');
 					if(openStatBlock.length > 0 && window.JOURNAL.notes[msg.data.id] != undefined){
-						currScroll = openStatBlock[0].scrollTop;
+						currScroll = openStatBlock.find('.avtt-stat-block-container, .note-text').first()[0].scrollTop;
 						const minimized = openStatBlock.closest('.minimized').length > 0;			
 						const container = await load_monster_stat(msg.data.id, msg.data.tokenId, window.JOURNAL.notes[msg.data.id].text);
 						if(minimized) container.dblclick();					
 						container.find('.avtt-stat-block-container, .note-text').first()[0].scrollTop = currScroll;
+					}
+					if(window.JOURNAL.notes[msg.data.id]?.text?.includes('dnd-sheet')){
+						if(openStatBlock.length > 0){
+							debounceRescanStatBlock(openStatBlock, msg.data.id, msg.data.tokenId, currScroll, true);
+						} else if(openMainNote.length > 0){
+							debounceRescanStatBlock(openMainNote, msg.data.id, msg.data.tokenId, currScroll, true);
+						}
 					}
 					window.JOURNAL.persist(true);
 
@@ -1376,13 +1394,14 @@ class MessageBroker {
 							}
 						}
 					}
-					if($("[name='streamDiceRolls'].rc-switch-checked").length > 0) {
-						window.MB.sendMessage("custom/myVTT/enabledicestreamingfeature")
-					}
+
 					window.JOURNAL.sync();
 					window.MB.sendMessage("custom/myVTT/DMAvatar", {
 						avatar: dmAvatarUrl
 					})
+					if(typeof send_aoe_style_tokens_to_players === "function"){
+						send_aoe_style_tokens_to_players();
+					}
 				}
 
 				if (msg.data && msg.data.player_id && msg.data.pc) {
@@ -1425,228 +1444,6 @@ class MessageBroker {
 					$('video#scene_map').attr('data-volume', msg.data.volume/100)
 				}
 
-			} else if(msg.eventType == "custom/myVTT/whatsyourdicerolldefault"){
-				if( !window.JOINTHEDICESTREAM)
-					return;
-				if( (!diceplayer_id)  || (msg.data.to!= diceplayer_id) )
-					return;
-				let sendToText = gamelog_send_to_text()	
-				if(sendToText == "Everyone") {
-					window.MB.sendMessage("custom/myVTT/revealmydicestream",{
-						streamid: diceplayer_id
-					});		
-				}
-				else if (sendToText == "Dungeon Master" || sendToText == "DM"){
-					window.MB.sendMessage("custom/myVTT/showonlytodmdicestream",{
-						streamid: diceplayer_id
-					});
-				}
-				else{
-					window.MB.sendMessage("custom/myVTT/hidemydicestream",{
-						streamid: diceplayer_id
-					});
-				}
-			} else if(msg.eventType == "custom/myVTT/turnoffsingledicestream"){
-				let dicePeer = window.diceCurrentPeers.filter(d=> d.peer==msg.data.from)[0]
-				if(dicePeer === undefined || (msg.data.to != "everyone" && msg.data.to != diceplayer_id)){
-				 return;
-				}	
-				$("[id^='streamer-"+msg.data.from+"']").remove();
-				dicePeer.close();
-				if(msg.data.to != "everyone"){
-					window.MB.inject_chat({
-						player: window.PLAYER_NAME,
-						img: window.PLAYER_IMG,
-						text: `<span class="flex-wrap-center-chat-message">One of your dice stream connections has failed/disconnected. Try reconnecting to the dice stream if this was not intentional.<br/><br/></div>`,
-						whisper: window.PLAYER_NAME
-					});
-				}
-			} else if(msg.eventType == "custom/myVTT/disabledicestream"){
-				enable_dice_streaming_feature(false);
-			} else if(msg.eventType == "custom/myVTT/showonlytodmdicestream"){
-				if(!window.DM){		
-					hideDiceVideo(msg.data.streamid);
-				}		
-				else{
-					revealDiceVideo(msg.data.streamid);
-				}
-			} else if(msg.eventType == "custom/myVTT/hidemydicestream"){
-					hideDiceVideo(msg.data.streamid);
-			} else if(msg.eventType == "custom/myVTT/revealmydicestream"){
-					revealDiceVideo(msg.data.streamid);
-			} else if(msg.eventType == "custom/myVTT/enabledicestreamingfeature"){
-					enable_dice_streaming_feature(true);				
-			} else if(msg.eventType == "custom/myVTT/wannaseemydicecollection"){
-				if( !window.JOINTHEDICESTREAM)
-					return;
-				if( (!window.MYSTREAMID))
-					return;
-				const configuration = {
-    				iceServers:  [{urls: "stun:stun.l.google.com:19302"}]
-  				};
-				let peer= new RTCPeerConnection(configuration);
-
-				if(window.MYMEDIASTREAM){
-					let stream = window.MYMEDIASTREAM;
-					stream.getTracks().forEach(track => peer.addTrack(track, stream));
-				}
-
-				peer.addEventListener('track', (event) => {
-				    addVideo(event.streams[0],msg.data.from);
-				});
-				window.makingOffer = [];
-				window.makingOffer[msg.data.from] = false;
-				peer.onconnectionstatechange=() => {
-					if(peer.connectionState=="connected"){
-						window.MB.inject_chat({
-							player: window.PLAYER_NAME,
-							img: window.PLAYER_IMG,
-							text: `<span class="flex-wrap-center-chat-message"><p>A dice stream peer has ${peer.connectionState}. <br/><br/></div>`,
-							whisper: window.PLAYER_NAME,
-						});
-					}
-					
-					if(peer.connectionState=="closed" || peer.connectionState=="failed" || peer.connectionState == "disconnected"){
-						peer.restartIce();
-						window.MB.inject_chat({
-							player: window.PLAYER_NAME,
-							img: window.PLAYER_IMG,
-							text: `<span class="flex-wrap-center-chat-message"><p>A dice stream connection has ${peer.connectionState}.</p><p> An automatic reconnect is being attempted. </p><p>If you are still unable to see one or more of your groups dice you may have to manually disable then reenable your dice stream in the chat above.</p><br/><br/></div>`,
-							whisper: window.PLAYER_NAME,
-						});	          
-					}
-				};
-				peer.onnegotiationneeded = () => {
-					try {
-						window.makingOffer[msg.data.from] = true;
-						peer.createOffer({offerToReceiveVideo: 1}).then( (desc) => {
-							peer.setLocalDescription(desc);
-							self.sendMessage("custom/myVTT/okletmeseeyourdice",{
-								to: msg.data.from,
-								from: window.MYSTREAMID,
-								offer: desc,
-								dm: window.DM
-							})
-						});
-					} catch(err) {
-						console.error(err);
-					} finally {
-						setTimeout(function(){
-							window.makingOffer[msg.data.from] = false;
-						}, 500)		    
-					}	
-				};
-			 		
-				peer.onicecandidate = e => {
-					window.MB.sendMessage("custom/myVTT/iceforyourgintonic",{
-						to: msg.data.from,
-						from: window.MYSTREAMID,
-						ice: e.candidate
-					})
-				};				
-				window.STREAMPEERS[msg.data.from]=peer;				
-			} else if(msg.eventType == "custom/myVTT/okletmeseeyourdice"){
-				if( !window.JOINTHEDICESTREAM)
-					return;
-				if( (!window.MYSTREAMID)  || (msg.data.to!= window.MYSTREAMID) )
-					return;
-				const configuration = {
-    				iceServers:  [{urls: "stun:stun.l.google.com:19302"}]
-  				};
-				let peer= new RTCPeerConnection(configuration);
-
-				if(window.MYMEDIASTREAM){
-					let stream=  window.MYMEDIASTREAM;
-					stream.getTracks().forEach(track => peer.addTrack(track, stream));
-				}
-
-				peer.addEventListener('track', (event) => {
-				  addVideo(event.streams[0],msg.data.from);
-				});
-				window.makingOffer = [];
-				window.makingOffer[msg.data.from] = false;
-				peer.onnegotiationneeded = () => {
-					try {
-						window.makingOffer[msg.data.from] = true;
-						peer.createOffer({offerToReceiveVideo: 1}).then( (desc) => {
-							peer.setLocalDescription(desc);
-							self.sendMessage("custom/myVTT/okletmeseeyourdice",{
-								to: msg.data.from,
-								from: window.MYSTREAMID,
-								offer: desc,
-								dm: window.DM
-							})
-						});
-					} catch(err) {
-						console.error(err);
-					} finally {
-						setTimeout(function(){
-							window.makingOffer[msg.data.from] = false;
-						}, 500)		    
-					}	
-				};
-				peer.onconnectionstatechange=() => {
-					if(peer.connectionState=="connected"){
-						window.MB.inject_chat({
-							player: window.PLAYER_NAME,
-							img: window.PLAYER_IMG,
-							text: `<span class="flex-wrap-center-chat-message"><p>A dice stream peer has ${peer.connectionState}. <br/><br/></div>`,
-							whisper: window.PLAYER_NAME,
-						});
-					}
-					if((peer.connectionState=="closed") || (peer.connectionState=="failed" || peer.connectionState == "disconnected")){
-						peer.restartIce();
-						window.MB.inject_chat({
-							player: window.PLAYER_NAME,
-							img: window.PLAYER_IMG,
-							text: `<span class="flex-wrap-center-chat-message"><p>A dice stream connection has ${peer.connectionState}.</p><p> An automatic reconnect is being attempted. </p><p>If you are still unable to see one or more of your groups dice you may have to manually disable then reenable your dice stream in the chat above.</p><br/><br/></div>`,
-							whisper: window.PLAYER_NAME,
-						});
-					}
-				};
-		
-				peer.onicecandidate = e => {
-					window.MB.sendMessage("custom/myVTT/iceforyourgintonic",{
-						to: msg.data.from,
-						from: window.MYSTREAMID,
-						ice: e.candidate
-					})
-				};				
-				window.STREAMPEERS[msg.data.from]=peer;	
-				let ignoreOffer = false;
-				if(msg.data.offer){
-					const offerCollision = (msg.data.offer.type == "offer") && (window.makingOffer[msg.data.from] || window.STREAMPEERS[msg.data.from].signalingState != "stable")
-				  let myStreamParse = parseInt(window.MYSTREAMID) || 0;
-				  let fromStreamParse = parseInt(msg.data.from) || 0;
-				  ignoreOffer = (((myStreamParse > fromStreamParse) && !msg.data.dm) || window.DM) && offerCollision
-				  if (ignoreOffer) {
-				    return;
-				  }
-				}		
-				peer = window.STREAMPEERS[msg.data.from];
-				peer.setRemoteDescription(msg.data.offer);
-				window.STREAMPEERS[msg.data.from] = peer;	
-	
-		
-				peer.createAnswer().then( (desc) => {
-				peer.setLocalDescription(desc);
-					
-				window.MB.sendMessage("custom/myVTT/okseethem",{
-						from: window.MYSTREAMID,
-						to: msg.data.from,
-						answer: desc
-					});
-			});
-				
-				window.STREAMPEERS[msg.data.from] = peer;					
-			} else if(msg.eventType == "custom/myVTT/okseethem"){
-				if( !window.JOINTHEDICESTREAM)
-					return;
-				if( (!window.MYSTREAMID)  || (msg.data.to!= window.MYSTREAMID) )
-					return;
-
-				let peer=window.STREAMPEERS[msg.data.from];
-				peer.setRemoteDescription(msg.data.answer);
 			} else if (msg.eventType === "custom/myVTT/peerReady") {
 				window.PeerManager.receivedPeerReady(msg);
 			} else if (msg.eventType === "custom/myVTT/peerConnect") {
@@ -1658,44 +1455,21 @@ class MessageBroker {
 						window.videoConnectedPeers.push(msg.data.id);
 						setRemoteStream(stream, call.peer);   
 						call.on('close', () => {
-							$(`.video-meet-area video#${call.peer}`).remove();
-							})   
+							removePeer(call.peer);
+						})   
 					})
 					window.currentPeers = window.currentPeers.filter(d=> d.peer != call.peer)
 					window.currentPeers.push(call);
 				}
 			} else if (msg.eventType === "custom/myVTT/videoPeerDisconnect") {
 					$(`.video-meet-area video#${msg.data.id}`).remove();
-			} else if (msg.eventType === "custom/myVTT/diceVideoPeerConnect") {
-				if(msg.data.id != diceplayer_id){
-					let call = window.diceVideoPeer.call(msg.data.id, window.MYMEDIASTREAM)
-					call.on('stream', (stream) => {
-						window.diceVideoConnectedPeers.push(msg.data.id);
-						setDiceRemoteStream(stream, call.peer);   
-						call.on('close', () => {
-							$(`video.remote-dice-video#${call.peer}, #streamer-canvas-${call.peer}`).remove();
-						})   
-					})
-					window.diceCurrentPeers = window.diceCurrentPeers.filter(d=> d.peer != call.peer)
-					window.diceCurrentPeers.push(call);
-				}
-				return;
-			}
-
-
+			} 
 		};
-		if(is_campaign_page()){
-			get_cobalt_token(function (token) {
-				self.loadWS(token);
-			});
 
+		if(is_campaign_page()){
 			self.loadAboveWS();
 			return;
 		}
-
-		get_cobalt_token(function (token) {
-			self.loadWS(token, report_connection);
-		});
 
 		self.loadAboveWS(notify_player_join);
 
@@ -1805,6 +1579,7 @@ class MessageBroker {
 				window.TOKEN_OBJECTS = {};
 				window.ON_SCREEN_TOKENS = {};
 				window.videoTokenOld = {};
+				$(`.boss-hp-bar`).remove();
 				let data = msg.data;
 				let self=this;
 				let loadMap = "";
@@ -2234,7 +2009,7 @@ class MessageBroker {
 
 		player = DOMPurify.sanitize( player,{ALLOWED_TAGS: ['span']});
 		image = DOMPurify.sanitize( image,{ALLOWED_TAGS: ['img']});
-		data.text = DOMPurify.sanitize( data.text,{ALLOWED_TAGS: ['video','img','div','p', 'b', 'button', 'span', 'style', 'path', 'rect', 'svg', 'a', 'hr', 'ul', 'li', 'ol', 'h3', 'h2', 'h4', 'h1', 'table', 'tr', 'td', 'th', 'br', 'input', 'strong', 'em'], ADD_ATTR: ['target']}); //This array needs to include all HTML elements the extension sends via chat.
+		data.text = DOMPurify.sanitize( data.text,{ALLOWED_TAGS: ['video','img','div','p', 'b', 'i', 'button', 'span', 'style', 'path', 'rect', 'svg', 'a', 'hr', 'ul', 'li', 'ol', 'h3', 'h2', 'h4', 'h1', 'table', 'tr', 'td', 'th', 'br', 'input', 'strong', 'em'], ADD_ATTR: ['target']}); //This array needs to include all HTML elements the extension sends via chat.
 
 
 		if(data.dmonly && !(window.DM) && !local) // /dmroll only for DM of or the user who initiated it
@@ -2565,9 +2340,7 @@ class MessageBroker {
 		if (message.data.injected_data?.img?.startsWith('above-bucket-not-a-url')) {
 			message.data.injected_data.img = await getAvttStorageUrl(message.data.injected_data.img);
 		}
-		if (this.ws?.readyState != undefined && this.ws.readyState == this.ws.OPEN) {
-			this.ws.send(JSON.stringify(message));
-		}
+		window.diceRoller.ddbDispatch(message);
 
 		this.handle_injected_data(message);
 
@@ -2577,9 +2350,16 @@ class MessageBroker {
 	sendMessage(eventType, data,skipSceneId=false, forceSceneId = undefined) {
 		let self = this;
 
-		//this.sendDDBMB(eventType,data); 
-
 		if(eventType.startsWith("custom")){
+			if(eventType == "custom/myVTT/notesSync"){
+				if(data.notes.length == 1 && data.notes[0].text.length > 120000){
+					window.MB.sendMessage('custom/myVTT/note',{
+						id: data.notes[0].id,
+						note: data.notes[0]
+					});
+					return;
+				}
+			}
 			if(eventType == "custom/myVTT/note"){
 				const copyData = $.extend(true, {}, data);
 				if(!copyData.delete){
@@ -2660,7 +2440,7 @@ class MessageBroker {
 			return;
 		}
 
-		if (this.abovews.readyState == this.ws.OPEN) {
+		if (this.abovews.readyState == this.abovews.OPEN) {
 			this.abovews.send(JSON.stringify(message));
 		}
 		else {
@@ -2686,30 +2466,7 @@ class MessageBroker {
 			// entityId :"43263440", proviamo a non metterla
 			// entityType:"character", // MOLTO INTERESSANTE. PENSO VENGA USATO PER CAPIRE CHE IMMAGINE METTERCI.
 		};
-
-		if (this.ws.readyState == this.ws.OPEN) {
-			this.ws.send(JSON.stringify(message));
-		}
-		else { // TRY TO RECOVER
-			get_cobalt_token(function(token) {
-				self.loadWS(token, function() {
-					// TODO, CONSIDER ADDING A SYNCMEUP / SCENE PAIR HERE
-					self.ws.send(JSON.stringify(message));
-				});
-			});
-		}
-	}
-
-	sendPing() {
-		let self = this;
-		if (this.ws.readyState == this.ws.OPEN) {
-			this.ws.send("{\"data\": \"ping\"}");
-		}
-		else {
-			get_cobalt_token(function(token) {
-				self.loadWS(token, null);
-			});
-		}
+		window.diceRoller.ddbDispatch(message);
 	}
 
 	sendAbovePing(){

@@ -24,6 +24,7 @@ $(function() {
   window.AVTT_VERSION = $("#avttversion").attr('data-version');
   $("head").append('<link rel="stylesheet" href="https://fonts.googleapis.com/icon?family=Material+Icons"></link>');
   $("head").append('<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20..48,100..700,0..1,-50..200" />');
+  window.enableNoisyLogs = get_logging_level();
   if (is_encounters_page()) {
     window.DM = true; // the DM plays from the encounters page
     dmAvatarUrl = $('#site-bar').attr('user-avatar') != undefined ? $('#site-bar').attr('user-avatar') : $('.site-bar .user-interactions-profile-img').attr('src') != undefined ? $('.site-bar .user-interactions-profile-img').attr('src') : $('img[class*="avatarImage"]').attr('src');
@@ -33,6 +34,9 @@ $(function() {
     window.DM = $(".ddb-campaigns-detail-body-dm-notes-private").length === 1;
   } else {
     window.DM = false;
+  }
+  if(is_spectator_page() || is_encounters_page()) {
+    $('body').addClass('encounter-builder-page')
   }
 });
 
@@ -186,22 +190,59 @@ function build_combat_tracker_loading_indicator(subtext = "One moment while we f
   });
   return loadingIndicator.clone();
 }
-function add_dice_stream_gamelog_button(){    
-  if(window.JOINTHEDICESTREAM == undefined){
-    window.JOINTHEDICESTREAM = window.EXPERIMENTAL_SETTINGS['streamDiceRolls'];
+
+
+function update_dice_badge(diceElement, count) {
+  const $diceElement = $(diceElement);
+  const $badge = $diceElement.parent().find('.dice-badge');
+
+  if (count === 0) {
+    $diceElement.removeAttr('data-count');
+    $badge.remove();
+    return;
   }
-  if ($('.stream-dice-button').length == 0){
-    $(".glc-game-log>[class*='Container-Flex']").append($(`<div id="stream_dice"><div class='stream-dice-button ${window.EXPERIMENTAL_SETTINGS['streamDiceRolls'] ? `enabled` : ``}'>Dice Stream ${window.EXPERIMENTAL_SETTINGS['streamDiceRolls'] ? `Enabled` : `Disabled`}</div></div>`));
-    $(".stream-dice-button").off().on("click", function () {
-      if (window.JOINTHEDICESTREAM) {
-        update_dice_streaming_feature(false);
-      }
-      else {
-        update_dice_streaming_feature(true);
-      } 
-    })
+
+  $diceElement.attr('data-count', count);
+  if ($badge.length > 0) {
+    $badge.text(count);
+  } else {
+    $diceElement.parent().append(`<span class="dice-badge">${count}</span>`);
   }
 }
+
+function get_selected_dice() {
+  return $('.dice-roller > div img[data-count]');
+}
+
+function sync_roll_mod_visibility() {
+  const $selectedDice = get_selected_dice();
+  const $modContainer = $('.roll-mod-container');
+
+  if ($selectedDice.length > 0) {
+    if (!$modContainer.hasClass('show')) {
+      $modContainer.addClass('show');
+      $modContainer.find('input').val(0);
+    }
+  } else {
+    $modContainer.removeClass('show');
+  }
+}
+
+function clear_selected_dice() {
+  const $selectedDice = get_selected_dice();
+  $selectedDice.removeAttr('data-count');
+  $('.dice-roller > div .dice-badge').remove();
+  $('.roll-mod-container').removeClass('show');
+}
+
+function get_active_worker_keys() {
+  if(typeof window.ActiveWorkers === 'undefined' || window.ActiveWorkers === null) {
+    console.warn("Dice workers called before initialization. If happening during load most likely other players rolls.");
+    return [];
+  }
+  return Object.keys(window.ActiveWorkers);
+}
+
 /**
  * Add Dice buttons into sidebar.
  *
@@ -216,7 +257,6 @@ function inject_chat_buttons() {
     // make sure we only ever inject these once. This gets called a lot on the character sheet which is intentional, but just in case we accidentally call it too many times, let's log it, and return
     return;
   }
-  add_dice_stream_gamelog_button();
   const chatTextWrapper = $(`<div class='chat-text-wrapper sidebar-hover-text' data-hover="Dice Rolling Format: /cmd diceNotation action  
     '/r 1d20'
     '/roll 1d4 punch:bludgeoning damage'
@@ -260,7 +300,22 @@ Other Commands:
         <img title="d20" alt="d20" height="40px" src="${window.EXTENSION_PATH + "assets/dice/d20.svg"}"/>
       </div>
     </div>
+    
   `)  
+
+  const clearDice = $(`<div class="clear-dice">Clear Dice</div>`);
+  clearDice.off('pointerdown.diceClear touchstart.diceClear').on('pointerdown.diceClear touchstart.diceClear', function(e) {
+    e.preventDefault();
+    if(window.ActiveWorkers){
+      get_active_worker_keys().forEach(key => {
+        if(key.includes('dice')){
+          window.ActiveWorkers[key].postMessage({
+              type: "resetStore",
+          });
+        }
+      });
+    }
+  });
   const languageSelect= $(`<select id='chat-language'></select>`)
   const ignoredLanguages = ['All'];
 
@@ -274,59 +329,25 @@ Other Commands:
     languageSelect.append(option);
   }
 
-  gameLog.append(chatTextWrapper, languageSelect, diceRoller);
+  gameLog.append(chatTextWrapper, languageSelect, diceRoller, clearDice);
 
   $(".dice-roller > div img").on("click", async function(e) {
-    if ($(".dice-toolbar__dropdown, [class*='DiceContainer_button']").length > 0 && !window.EXPERIMENTAL_SETTINGS['rpgRoller']) {
-      // DDB dice are on the screen so let's use those. Ours will synchronize when these change.
-      if (($(".dice-toolbar__dropdown").length > 0 && !$(".dice-toolbar__dropdown").hasClass("dice-toolbar__dropdown-selected")) || $(`[class*='DiceContainer_button']:not([class*='DiceContainer_customDiceRollOpen'])`).length>0) {
-        // make sure it's open
-        await $(".dice-toolbar__dropdown-die, [class*='DiceContainer_button']").click();
-      }
-      // select the DDB dice matching the one that the user just clicked
-      let dieSize = $(this).attr("alt");
-      await $(`.dice-die-button[data-dice='${dieSize}'], [class*='AnchoredPopover_wrapper'] #${dieSize}`).click();
-    } else {
-      // there aren't any DDB dice on the screen so use our own
-      const dataCount = $(this).attr("data-count");
-      if (dataCount === undefined) {
-        $(this).attr("data-count", 1);
-        $(this).parent().append(`<span class="dice-badge">1</span>`);
-      } else {
-        $(this).attr("data-count", parseInt(dataCount) + 1);
-        $(this).parent().append(`<span class="dice-badge">${parseInt(dataCount) + 1}</span>`);
-      }
-      if ($(".dice-roller > div img[data-count]").length > 0) {
-        if(!$(".roll-mod-container").hasClass('show')){
-          $(".roll-mod-container").addClass("show");
-          $(".roll-mod-container").find('input').val(0);
-        }
-      } else {
-        $(".roll-mod-container").removeClass("show");
-      }
-    }
+    const $this = $(this);
+    const dataCount = $this.attr("data-count");
+    const nextCount = dataCount === undefined ? 1 : parseInt(dataCount) + 1;
+
+    update_dice_badge($this, nextCount);
+    sync_roll_mod_visibility();
   });
 
-  if(window.rollButtonObserver)
-    window.rollButtonObserver.disconnect();
-  window.rollButtonObserver = new MutationObserver(function() {
+  if(!window.DM && !is_spectator_page()){
+    if(window.rollButtonObserver)
+      window.rollButtonObserver.disconnect();
+    window.rollButtonObserver = new MutationObserver(function() {
       // Any time the DDB dice buttons change state, we want to synchronize our dice buttons to match theirs.
       if ($("[class*='AnchoredPopover_wrapper']").length>0 && window.diceRoller?.getWaitingForRoll())
         return;
       
-      $(".dice-die-button").each(function() {
-        let dieSize = $(this).attr("data-dice");
-        let ourDiceElement = $(`.dice-roller > div img[alt='${dieSize}']`);
-        let diceCountElement = $(this).find(".dice-die-button__count");
-        ourDiceElement.parent().find("span").remove();
-        if (diceCountElement.length == 0) {
-          ourDiceElement.removeAttr("data-count");
-        } else {
-          let diceCount = parseInt(diceCountElement.text());
-          ourDiceElement.attr("data-count", diceCount);
-          ourDiceElement.parent().append(`<span class="dice-badge">${diceCount}</span>`);
-        }
-      })
       $("[class*='AnchoredPopover_wrapper'] button[id^='d']").each(function () {
         let dieSize = this.id;
         let ourDiceElement = $(`.dice-roller > div img[alt='${dieSize}']`);
@@ -355,28 +376,32 @@ Other Commands:
           $(".roll-mod-container").removeClass("show");
         }
       }, 0);  
-  })
+    });
+    
 
-  if(window.watchForDicePanel)
-    window.watchForDicePanel.disconnect();
-  window.watchForDicePanel = new MutationObserver((mutations) => {
-   mutations.every(async (mutation) => {
-      if (!mutation.addedNodes) return
+    if(window.watchForDicePanel)
+      window.watchForDicePanel.disconnect();
+    window.watchForDicePanel = new MutationObserver((mutations) => {
+    mutations.every(async (mutation) => {
+        if (!mutation.addedNodes) return
 
-      for (let i = 0; i < mutation.addedNodes.length; i++) {
-        // do things to your newly added nodes here
-        let node = mutation.addedNodes[i]
-        if ((node.className == 'dice-rolling-panel' || $('.dice-rolling-panel').length>0)){
-          const mutation_target = $(".dice-toolbar__dropdown, [class*='AnchoredPopover_wrapper']")[0];
-          const mutation_config = { attributes: true, childList: true, characterData: true, subtree: true };
-          window.rollButtonObserver.observe(mutation_target, mutation_config);
-          window.watchForDicePanel.disconnect();
-          return false;
+        for (let i = 0; i < mutation.addedNodes.length; i++) {
+          // do things to your newly added nodes here
+          let node = mutation.addedNodes[i]
+          if ((node.className == 'dice-rolling-panel' || $('.dice-rolling-panel').length>0)){
+            const mutation_target = $(".dice-toolbar__dropdown, [class*='AnchoredPopover_wrapper']")[0];
+            const mutation_config = { attributes: true, childList: true, characterData: true, subtree: true };
+            window.rollButtonObserver.observe(mutation_target, mutation_config);
+            window.watchForDicePanel.disconnect();
+            return false;
+          }
         }
-      }
-      return true // must return true if doesn't break
-    })
-  });
+        return true // must return true if doesn't break
+      })
+    });
+    watchForDicePanel.observe(document.body, {childList: true, subtree: true, attributes: false, characterData: false});
+  }
+
 
   if (window.sendToDefaultObserver)
     window.sendToDefaultObserver.disconnect();
@@ -420,69 +445,47 @@ Other Commands:
     })
   });
 
-  watchForDicePanel.observe(document.body, {childList: true, subtree: true, attributes: false, characterData: false});
   gamelogObserver.observe(document.body, {childList: true, subtree: true, attributes: false, characterData: false});
 
-  
 
-
-
-  
-
-  
 
   $(".dice-roller > div img").on("contextmenu", function(e) {
     e.preventDefault();
 
-    if ($(".dice-toolbar__dropdown, [class*='DiceContainer_button']").length > 0 && !window.EXPERIMENTAL_SETTINGS['rpgRoller']) {
-      // There are DDB dice on the screen so update those buttons. Ours will synchronize when these change.
-      // the only way I could get this to work was with pure javascript. Everything that I tried with jQuery did nothing
-      let dieSize = $(this).attr("alt");
-      let element = $(`.dice-die-button[data-dice='${dieSize}'], #${dieSize}`)[0];
-      let e = element.ownerDocument.createEvent('MouseEvents');
-      e.initMouseEvent('contextmenu', true, true,
-          element.ownerDocument.defaultView, 1, 0, 0, 0, 0, false,
-          false, false, false, 2, null);
-      element.dispatchEvent(e);
+    const $this = $(this);
+    const currentCount = $this.attr("data-count");
+    const nextCount = currentCount === undefined ? -1 : parseInt(currentCount) - 1;
+
+    if (nextCount === 0) {
+      $this.removeAttr('data-count');
+      $this.parent().find('.dice-badge').remove();
     } else {
-      let dataCount = $(this).attr("data-count");
-      if (dataCount !== undefined) {
-        dataCount = parseInt(dataCount) - 1;
-        if (dataCount === 0) {
-          $(this).removeAttr("data-count");
-          $(this).parent().find("span").remove();
-        } else {
-          $(this).attr("data-count", dataCount);
-          $(this).parent().append(`<span class="dice-badge">${dataCount}</span>`);
-        }
-      }
-      if ($(".dice-roller > div img[data-count]").length > 0) {
-        if(!$(".roll-mod-container").hasClass('show')){
-          $(".roll-mod-container").addClass("show");
-          $(".roll-mod-container").find('input').val(0);
-        }
-      } else {
-        $(".roll-mod-container").removeClass("show");
-      }
+      update_dice_badge($this, nextCount);
     }
+
+    sync_roll_mod_visibility();
   });
 
   if ($(".roll-button").length == 0) {
-    const rollButton = $(`<button class="roll-button">Roll</button>`);
+    const rollButton = $(`<button id='sendRoll' class="roll-button">Roll</button>`);
     const modInput = $(`<div class='roll-mod-container'>
         <button class="roll-button-mod dis roll_mods_button icon-disadvantage markers-icon"></button>
         <button class="roll-button-mod minus">-</button>
         <input class="roll-input-mod" type='number' value='0' step='1'></input>
         <button class="roll-button-mod plus">+</button>
         <button class="roll-button-mod adv roll_mods_button icon-advantage markers-icon"></button>
+        <select id='contextSelect' class="roll-button" style="width:20px; left:unset; right:0px; border-radius:0px 10px 10px 0px; background-color:buttonface;"></select>
       </div>`)
     modInput.append(rollButton);
 
     
     $("body").append(modInput);
     let advDis;
-    modInput.off('click.button').on('click.button', 'button.roll-button-mod', function(e){
+    modInput.find('button.roll-button-mod').off('pointerdown.button touchstart.button').on('pointerdown.button touchstart.button', function(e){
+      if(e.button === 2) return;
       e.preventDefault();
+      e.stopPropagation();
+      e.stopImmediatePropagation();
       const clickedButton = $(this)
       const input = modInput.find('input');
       if(clickedButton.hasClass('minus')){
@@ -493,18 +496,23 @@ Other Commands:
       }
       else if (clickedButton.hasClass('adv')){
         advDis = 'kh';
-        rollButton.click();
+        rollButton.trigger('pointerdown', { button: 0 });
       }
       else if(clickedButton.hasClass('dis')){
         advDis = 'kl'
-        rollButton.click();
+        rollButton.trigger('pointerdown', { button: 0 });
       }
     });
-    rollButton.on("click", function (e) {
-      let modValue = parseInt($('.roll-input-mod').val())
+  
 
-      const rollExpression = [];
-      const diceToCount = $(".dice-roller > div img[data-count]").length>0 ? $(".dice-roller > div img[data-count]") : $('.dice-die-button__count')
+    const getExpression = function(button) {
+      $('[data-dd-action-name="Close Roll Dice"]').click();
+      let modValue = parseInt($('.roll-input-mod').val()) || 0;
+
+      const positiveTerms = [];
+      const negativeTerms = [];
+      const selectedDice = get_selected_dice();
+      const diceToCount = selectedDice.length > 0 ? selectedDice : $('.dice-die-button__count');
       diceToCount.each(function() {
         let count, dieType;
         if($(this).is('.dice-die-button__count')){
@@ -515,26 +523,80 @@ Other Commands:
           count = $(this).attr("data-count");
           dieType = $(this).attr("alt");
         }
+
+        const numericCount = parseInt(count);
+        if (Number.isNaN(numericCount) || numericCount === 0) {
+          return;
+        }
+
         if(advDis != undefined){
-          for (let i = 0; i<count; i++){
-            rollExpression.push('2' + dieType + advDis + '1');
-          }       
+          const countValue = Math.abs(numericCount);
+          for (let i = 0; i<countValue; i++){
+            const advantageExpression = '2' + dieType + advDis + '1';
+            if (numericCount < 0) {
+              negativeTerms.push(advantageExpression);
+            } else {
+              positiveTerms.push(advantageExpression);
+            }
+          }
+        } else{
+          const normalizedTerm = `${Math.abs(numericCount)}${dieType}`;
+          if (numericCount < 0) {
+            negativeTerms.push(normalizedTerm);
+          } else {
+            positiveTerms.push(normalizedTerm);
+          }
         }
-        else{
-          rollExpression.push(count + dieType);
-        }
-        
       });
       advDis = undefined;
       $('.dice-toolbar__dropdown-selected>div:first-of-type')?.click();
-      let expression = `${rollExpression.join("+")}${modValue<0 ? modValue : `+${modValue}`}`
 
+      let expression = positiveTerms.join('+');
+      negativeTerms.forEach((term) => {
+        expression = expression ? `${expression}-${term}` : `0-${term}`;
+      });
+
+      expression += modValue < 0 ? `${modValue}` : `+${modValue}`;
+      return expression;
+    }
+
+    rollButton.off('pointerdown.click touchstart.click').on('pointerdown.click touchstart.click', function (e) {
+      if (e.button === 2) return;
+      e.preventDefault();
+      e.stopPropagation();
+      e.stopImmediatePropagation();
+      const expression = getExpression(rollButton);
       window.diceRoller.roll(new DiceRoll(expression));
-
-      $(".roll-mod-container").removeClass("show");
-      $(".dice-roller > div img[data-count]").removeAttr("data-count");
-      $(".dice-roller > div span").remove();
+      clear_selected_dice();
     });
+    rollButton.on("contextmenu", function (e) {
+      e.preventDefault();
+        const expression = getExpression(rollButton);
+      	if (expression !== "1d20" && !/^1d20/gi.test(expression)) {
+          damage_dice_context_menu(`${expression}`)
+            .present(e.clientY-15, e.clientX+45);
+        } else {
+          standard_dice_context_menu(`${expression}`)
+            .present(e.clientY-15, e.clientX+48);
+        }
+    })
+    modInput.off('click.button').on('click.button', '#contextSelect', function(e){
+      e.preventDefault();
+      e.stopPropagation();
+      e.stopImmediatePropagation();
+    });
+    modInput.off('pointerdown.button touchstart.button').on('pointerdown.button touchstart.button', '#contextSelect', function(e){
+      if(e.button === 2) return;
+      e.preventDefault();
+      e.stopPropagation();
+      e.stopImmediatePropagation();
+      const contextMenuEvent = new MouseEvent('contextmenu', {
+        clientX: e.clientX-30,
+        clientY: e.clientY
+      });
+      rollButton[0].dispatchEvent(contextMenuEvent);
+    });
+
   }
 
   if (window.chatObserver === undefined) {
@@ -555,6 +617,7 @@ Other Commands:
     })
     $("div.MuiPaper-root.MuiMenu-paper").click();
   }, 0);
+
 }
 function find_currently_open_character_sheet() {
   if (is_characters_page()) {
@@ -622,7 +685,7 @@ function monitor_console_logs() {
       addLog({
         type: "promiseRejection",
         timeStamp: TS(),
-        value: [event.message, `${event.filename}: ${event.lineno}:${event.colno}`, event.error?.stack]
+        value: [event.message ?? event.reason?.message, event.reason?.stack]
       });
     }
 
@@ -740,7 +803,7 @@ function sanitize_aoe_shape(shape){
     return shape
 }
 function get_available_styles(){
-    return [
+  const styles = [
         "Acid",
         "Bludgeoning",
         "Cold",
@@ -758,11 +821,22 @@ function get_available_styles(){
         "Slashing",
         "Thunder",
         "Water"
-    ]
+      ];
+      if (typeof get_aoe_style_tokens === "function") {
+        const builtInStyleKeys = new Set(styles.map(style => style.toLowerCase()));
+        const customStyles = Object.keys(get_aoe_style_tokens())
+          .filter(style => !builtInStyleKeys.has(style.toLowerCase()));
+        styles.push(...customStyles);
+      }
+      if (typeof sort_styles_by_saved_aoe_order === "function") {
+        return sort_styles_by_saved_aoe_order(styles);
+      }
+      return styles;
 }
 function add_aoe_to_statblock(html){
 
   html = html.replaceAll(/&shy;|­/gi, '')
+    .replace(/(?:[^\S\r\n]*\r?\n){2,}[^\S\r\n]*/g, ' ') // heals the blank line runs left behind by previously injected buttons
 
   const aoeRegEx = /(([\d]+)-foot(-long ([\d]+)-foot-wide|-long, ([\d]+)-foot-wide|-radius, [\d]+-foot-high|-radius)? ([a-zA-z]+))(.*?[\>\s]([a-zA-Z]+) damage)?/gi
 
@@ -776,16 +850,7 @@ function add_aoe_to_statblock(html){
     if(shape == 'emanation')
       return `${m}` // potentially set a button for aura being set on these if an aura doesn't already exist
     else
-      return `<button class='avtt-aoe-button' border-width='1px' title='Place area of effect token' 
-          data-shape='${shape}' 
-          data-style='${m8 != undefined && get_available_styles().some(shape => shape.toLowerCase().includes(m8.toLowerCase())) ? m8.toLowerCase() : 'default'}' 
-          data-size='${m2}' 
-          data-name='${m6} AoE' 
-          ${shape == 'line' ? `data-line-width=${m4 != undefined ? `'${m4}'` : m5 != undefined ? `'${m5}'` : '5'}` : ''}>
-          ${m1}
-        </button>
-        ${m7 != undefined? m7 : ''}
-      `
+      return `<button class='avtt-aoe-button' border-width='1px' title='Place area of effect token' data-shape='${shape}' data-style='${m8 != undefined && get_available_styles().some(shape => shape.toLowerCase().includes(m8.toLowerCase())) ? m8.toLowerCase() : 'default'}' data-size='${m2}' data-name='${m6} AoE'${shape == 'line' ? ` data-line-width=${m4 != undefined ? `'${m4}'` : m5 != undefined ? `'${m5}'` : '5'}` : ''}>${m1}</button>${m7 != undefined ? m7 : ''}`
        
   })
 }
@@ -905,6 +970,96 @@ function noisy_log(...message) {
   console.debug(...message); 
 }
 
+
+
+/** Runs the dice notation/aoe replacements over an html string. */
+function apply_avtt_roll_button_markup(html){
+  const dashToMinus = /([\s>])−(\d)/gi
+
+  // apply most specific regex first matching all possible ways to write a dice notation
+  // to account for all the nuances of DNDB dice notation.
+  // numbers can be swapped for any number in the following comment
+  // matches "1d10", " 1d10 ", "1d10+1", " 1d10+1 ", "1d10 + 1" " 1d10 + 1 "
+  const strongRoll = /\s*(<strong>)(([+-]?\s?\d+d\d+(min\d+|ro[><=]?|kh\d+|kl\d+)?\s?)+\s?([+-]\s?[0-9]+)?)(<\/strong>)/gi
+  const damageRollRegexBracket = /\s*\((([+-]?\s?(\d+d\d+(min\d+|ro([<>]=?|=)\d+|kh\d+|kl\d+)*\s?))+\s?([+-]\s?[0-9]+)?)\)/gi
+  const damageRollRegex = /\s*([:\s>]|^)(([+-]?\s?(\d+d\d+(min\d+|ro([<>]=?|=)\d+|kh\d+|kl\d+)*\s?))+\s?([+-]\s?[0-9]+)?)([\.\):\s<,]|$)/gi
+  const hitRollRegexBracket = /\s*(?<![0-9]+d[0-9]+)(\()([+-]\s?[0-9]+)(\))/gi
+  const hitRollRegex = /\s*(?<![0-9]+d[0-9]+)([:\s>]|^)([+-]\s?[0-9]+)([:\s<,]|$)/gi
+  const dRollRegex = /\s*([\s>]|^)(\s?d[0-9]+)([^+-])/gi
+  const rechargeRegEx = /\s*(Recharge [0-6]?\s?[—–-]?\s?[0-6])/gi
+  const actionType = "roll"
+
+  const updated = html
+    .replaceAll(/(\d+d\d+(min\d+|k[hl]\d+)*ro)&lt;/gi, '$1<')
+    .replaceAll(/(\d+d\d+(min\d+|k[hl]\d+)*ro)&gt;/gi, '$1>')
+    .replaceAll(strongRoll, `$2`)
+    .replaceAll(dashToMinus, `$1-$2`)
+    .replaceAll(damageRollRegexBracket, ` <button data-exp='$1' data-mod='$6' data-rolltype='damage' data-actiontype='${actionType}' class='avtt-roll-button' title='${actionType}'>($1)</button>`)
+    .replaceAll(damageRollRegex, ` $1<button data-exp='$2' data-mod='$7' data-rolltype='damage' data-actiontype='${actionType}' class='avtt-roll-button' title='${actionType}'>$2</button>$8`)
+    .replaceAll(hitRollRegexBracket, ` <button data-exp='1d20' data-mod='$2' data-rolltype='to hit' data-actiontype=${actionType} class='avtt-roll-button' title='${actionType}'>$1$2$3</button>`)
+    .replaceAll(hitRollRegex, ` $1<button data-exp='1d20' data-mod='$2' data-rolltype='to hit' data-actiontype=${actionType} class='avtt-roll-button' title='${actionType}'>$2</button>$3`)
+    .replaceAll(dRollRegex, `$1<button data-exp='1$2' data-mod='' data-rolltype='to hit' data-actiontype=${actionType} class='avtt-roll-button' title='${actionType}'>$2</button>$3`)
+    .replaceAll(rechargeRegEx, `<button data-exp='1d6' data-mod='' data-rolltype='recharge' data-actiontype='Recharge' class='avtt-roll-button' title='${actionType}'>$1</button>`)
+
+  return add_aoe_to_statblock(updated);
+}
+
+/** True when the text node lives in a region of a sheet the user is allowed to edit. */
+function is_editable_roll_scan_text(textNode){
+  const parent = textNode.parentElement;
+  if(parent == undefined) return false;
+  if(parent.closest('a, button, input, textarea, select, script, style, svg, .ignore-abovevtt-formating, .abovevtt-slash-command-journal, .injected-input, .added-input-desc, .table-row-drag-handle, .add-table-row') != null) return false;
+  const editable = parent.closest('[contenteditable]');
+  return editable != null && editable.getAttribute('contenteditable') !== 'false';
+}
+
+/** Replaces a slash command element's content with its rolled formula button. */
+function apply_avtt_slash_command_button(sourceElement, targetElement){
+  const slashCommands = [...sourceElement.innerHTML.matchAll(multiDiceRollCommandRegex)];
+  if (slashCommands.length === 0) return;
+  noisy_log("inject_dice_roll slashCommands", slashCommands);
+  let updatedInnerHtml = sourceElement.innerHTML;
+  try {
+    slashCommands[0][0] = slashCommands[0][0].replace(/\(|\)/ig, '');
+    const diceRoll = DiceRoll.fromSlashCommand(slashCommands[0][0], window.PLAYER_NAME, window.PLAYER_IMG, "character", window.PLAYER_ID); // TODO: add gamelog_send_to_text() once that's available on the characters page without avtt running
+    updatedInnerHtml = updatedInnerHtml.replace(updatedInnerHtml, `<button class='avtt-roll-formula-button integrated-dice__container' title="${diceRoll.action?.toUpperCase() ?? "CUSTOM"} : ${diceRoll.rollType?.toUpperCase() ?? "ROLL"}${diceRoll.spellSave != undefined ? ` : ${diceRoll.spellSave.toUpperCase()}`: ""}" data-slash-command="${slashCommands[0][0]?.replace(/[><\s]+$|^[<>\s]+/gi, '')}">${diceRoll.expression}</button>`);
+  } catch (error) {
+    console.warn("inject_dice_roll failed to parse slash command. Removing the command to avoid infinite loop", slashCommands, slashCommands[0][0]);
+    updatedInnerHtml = updatedInnerHtml.replace(updatedInnerHtml, '');
+  }
+  $(targetElement).empty().append(updatedInnerHtml);
+}
+
+/** Injects roll/aoe buttons into a dnd sheet one editable text node at a time so the replacements can't rewrite the sheet's own markup. */
+function add_roll_buttons_to_editable_text(sheetElement){
+  const ownerDocument = sheetElement.ownerDocument;
+  sheetElement.normalize(); // stripping the previous buttons leaves split text nodes that would break the matches below
+  const walker = ownerDocument.createTreeWalker(sheetElement, NodeFilter.SHOW_TEXT);
+  const textNodes = [];
+  while (walker.nextNode()) {
+    textNodes.push(walker.currentNode);
+  }
+
+  for (const textNode of textNodes) {
+    if (textNode.nodeValue.trim() === '') continue;
+    if (!is_editable_roll_scan_text(textNode)) continue;
+
+    const escaped = textNode.nodeValue.replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;');
+    const updated = apply_avtt_roll_button_markup(escaped);
+    if (updated === escaped) continue;
+
+    const parsed = ownerDocument.createElement('template');
+    parsed.innerHTML = updated;
+    if (parsed.content.querySelector('.avtt-roll-button, .avtt-aoe-button') == null) continue;
+
+    textNode.parentNode.replaceChild(parsed.content, textNode);
+  }
+
+  $(sheetElement).find('.abovevtt-slash-command-journal').each(function(){
+    apply_avtt_slash_command_button(this, this);
+  });
+}
+
 function add_journal_roll_buttons(target, tokenId=undefined, specificImage=undefined, specificName=undefined){
   
   let pastedButtons = target.find('.avtt-roll-button, .integrated-dice__container, .avtt-aoe-button');
@@ -917,7 +1072,10 @@ function add_journal_roll_buttons(target, tokenId=undefined, specificImage=undef
   const rollName = specificName ? specificName : tokenExists ? window.all_token_objects[tokenId].options.revealname == true || window.all_token_objects[tokenId].options.player_owned ? window.all_token_objects[tokenId].options.name : '' : window.PLAYER_NAME
 
   const clickHandler = function(clickEvent) { 
-    clickEvent.stopPropagation();
+    if(clickEvent.button === 2) return;
+		clickEvent.preventDefault();
+		clickEvent.stopPropagation();
+		clickEvent.stopImmediatePropagation();
     roll_button_clicked(clickEvent, rollName, rollImage, tokenId ? "monster" : undefined, tokenId)
   };
 
@@ -929,35 +1087,22 @@ function add_journal_roll_buttons(target, tokenId=undefined, specificImage=undef
   // replace all "to hit" and "damage" rolls
 
   let currentElement = $(target).clone()
-  const dashToMinus = /([\s>])−(\d)/gi
-  
 
-  // apply most specific regex first matching all possible ways to write a dice notation
-  // to account for all the nuances of DNDB dice notation.
-  // numbers can be swapped for any number in the following comment
-  // matches "1d10", " 1d10 ", "1d10+1", " 1d10+1 ", "1d10 + 1" " 1d10 + 1 "
-  const strongRoll = /\s*(<strong>)(([0-9]+d[0-9]+)\s?([+-]\s?[0-9]+)?)(<\/strong>)/gi
-  const damageRollRegexBracket = /\s*(\()(([0-9]+d[0-9]+)\s?([+-]\s?[0-9]+)?)(\))/gi
-  const damageRollRegex = /\s*([:\s>]|^)(([0-9]+d[0-9]+)\s?([+-]\s?[0-9]+)?)([\.\):\s<,]|$)/gi
-  // matches " +1 " or " + 1 "
-  const hitRollRegexBracket = /\s*(?<![0-9]+d[0-9]+)(\()([+-]\s?[0-9]+)(\))/gi
-  const hitRollRegex = /\s*(?<![0-9]+d[0-9]+)([:\s>]|^)([+-]\s?[0-9]+)([:\s<,]|$)/gi
-  const dRollRegex = /\s*([\s>]|^)(\s?d[0-9]+)([^+-])/gi
-  const rechargeRegEx = /\s*(Recharge [0-6]?\s?[—–-]?\s?[0-6])/gi
-  const actionType = "roll"
-  const rollType = "AboveVTT"
-  let updated = currentElement.html()
-    .replaceAll(strongRoll, `$2`)
-    .replaceAll(dashToMinus, `$1-$2`)
-    .replaceAll(damageRollRegexBracket, ` <button data-exp='$3' data-mod='$4' data-rolltype='damage' data-actiontype='${actionType}' class='avtt-roll-button' title='${actionType}'>$1$2$5</button>`)
-    .replaceAll(damageRollRegex, ` $1<button data-exp='$3' data-mod='$4' data-rolltype='damage' data-actiontype='${actionType}' class='avtt-roll-button' title='${actionType}'>$2</button>$5`)
-    .replaceAll(hitRollRegexBracket, ` <button data-exp='1d20' data-mod='$2' data-rolltype='to hit' data-actiontype=${actionType} class='avtt-roll-button' title='${actionType}'>$1$2$3</button>`)
-    .replaceAll(hitRollRegex, ` $1<button data-exp='1d20' data-mod='$2' data-rolltype='to hit' data-actiontype=${actionType} class='avtt-roll-button' title='${actionType}'>$2</button>$3`)
-    .replaceAll(dRollRegex, `$1<button data-exp='1$2' data-mod='' data-rolltype='to hit' data-actiontype=${actionType} class='avtt-roll-button' title='${actionType}'>$2</button>$3`)
-    .replaceAll(rechargeRegEx, `<button data-exp='1d6' data-mod='' data-rolltype='recharge' data-actiontype='Recharge' class='avtt-roll-button' title='${actionType}'>$1</button>`)
+  // dnd sheets are a structured document where only the contenteditable regions hold user content,
+  // so those are scanned node by node instead of being run through the string replacements below
+  const targetIsSheet = currentElement.is('.dnd-sheet');
+  currentElement.filter('.dnd-sheet').each(function(){
+    add_roll_buttons_to_editable_text(this);
+  });
+  const extractedSheets = [];
+  currentElement.find('.dnd-sheet').each(function(){
+    add_roll_buttons_to_editable_text(this);
+    const placeholderIndex = extractedSheets.push(this) - 1;
+    $(this).replaceWith($(`<div data-avtt-sheet-placeholder="${placeholderIndex}"></div>`));
+  });
 
-  updated = add_aoe_to_statblock(updated);
-      
+  let updated = targetIsSheet ? currentElement.html() : apply_avtt_roll_button_markup(currentElement.html());
+
   let ignoreFormatting = $(currentElement).find('.ignore-abovevtt-formating');
 
   let slashCommandElements = $(currentElement).find('.abovevtt-slash-command-journal')
@@ -967,20 +1112,12 @@ function add_journal_roll_buttons(target, tokenId=undefined, specificImage=undef
     $(this).empty().append(ignoreFormatting[index].innerHTML);
   })
 
-  $newHTML.find('.abovevtt-slash-command-journal').each(function(index){      
-    const slashCommands = [...slashCommandElements[index].innerHTML.matchAll(multiDiceRollCommandRegex)];
-    if (slashCommands.length === 0) return;
-    noisy_log("inject_dice_roll slashCommands", slashCommands);
-    let updatedInnerHtml = slashCommandElements[index].innerHTML;
-    try {
-      slashCommands[0][0] = slashCommands[0][0].replace(/\(|\)/ig, '');
-      const diceRoll = DiceRoll.fromSlashCommand(slashCommands[0][0], window.PLAYER_NAME, window.PLAYER_IMG, "character", window.PLAYER_ID); // TODO: add gamelog_send_to_text() once that's available on the characters page without avtt running
-      updatedInnerHtml = updatedInnerHtml.replace(updatedInnerHtml, `<button class='avtt-roll-formula-button integrated-dice__container' title="${diceRoll.action?.toUpperCase() ?? "CUSTOM"}: ${diceRoll.rollType?.toUpperCase() ?? "ROLL"}" data-slash-command="${slashCommands[0][0]?.replace(/[><\s]+$|^[<>\s]+/gi, '')}">${diceRoll.expression}</button>`);
-    } catch (error) {
-      console.warn("inject_dice_roll failed to parse slash command. Removing the command to avoid infinite loop", slashCommands, slashCommands[0][0]);
-      updatedInnerHtml = updatedInnerHtml.replace(updatedInnerHtml, '');
-    }
-    $(this).empty().append(updatedInnerHtml);
+  $newHTML.find('.abovevtt-slash-command-journal').each(function(index){
+    apply_avtt_slash_command_button(slashCommandElements[index], this);
+  })
+
+  $newHTML.find('[data-avtt-sheet-placeholder]').each(function(){
+    $(this).replaceWith(extractedSheets[parseInt(this.getAttribute('data-avtt-sheet-placeholder'))]);
   })
 
   
@@ -1058,10 +1195,10 @@ function add_journal_roll_buttons(target, tokenId=undefined, specificImage=undef
       }
     } else if(targetButton.closest('.dnd-sheet .combat-metric').length>0){
       rollAction = targetButton.closest('.dnd-sheet .combat-metric').find('.label').text();
-      rollType = 'Roll'
+      rollType = 'roll'
     } else if(targetButton.closest('.dnd-sheet .hp-box').length>0){
       rollAction = targetButton.closest('.box-field').parent().find('.label').text();
-      rollType = 'Roll'
+      rollType = 'roll'
     } else if(targetButton.closest('.dnd-sheet .attacks-field').length>0){
       if(targetButton.closest('td').length>0){
         const columnIndex = targetButton.closest('td')[0].cellIndex; 
@@ -1081,7 +1218,7 @@ function add_journal_roll_buttons(target, tokenId=undefined, specificImage=undef
     }
 
     if (rollAction == '' || rollAction == undefined){
-      rollAction = 'Roll';
+      rollAction = 'custom';
     } 
     else if(rollAction.replace(' ', '').toLowerCase() == 'savingthrows'){ 
       rollAction = targetButton[0].previousSibling?.nodeValue?.replace(/[\W]+/gi, '');
@@ -1095,14 +1232,14 @@ function add_journal_roll_buttons(target, tokenId=undefined, specificImage=undef
     }
     else if(rollAction.replace(' ', '').toLowerCase() == 'proficiencybonus'){
       rollAction = 'Proficiency Bonus';
-      rollType = 'Roll';  
+      rollType = 'roll';  
     }
     else if(rollAction.replace(' ', '').toLowerCase() == 'hp' || rollAction.replace(' ', '').toLowerCase() == 'hitpoints'){
       rollAction = 'Hit Points';
-      rollType = 'Roll';  
+      rollType = 'roll';  
     }
     else if(rollAction.replace(' ', '').toLowerCase() == 'initiative'){
-      rollType = 'Roll';
+      rollType = 'roll';
     }
     
     const followingText = targetButton[0].nextSibling?.textContent?.trim()?.split(' ')[0]
@@ -1125,12 +1262,14 @@ function add_journal_roll_buttons(target, tokenId=undefined, specificImage=undef
   // terminate the clones reference, overkill but rather be safe when it comes to memory
   currentElement = null;
 
-  $currTarget.find(".avtt-roll-button").click(clickHandler);
+  $currTarget.find(".avtt-roll-button").off('pointerdown.click touchstart.click').on('pointerdown.click touchstart.click', clickHandler);
   $currTarget.find(".avtt-roll-button").on("contextmenu", rightClickHandler);
 
-  $currTarget.find("button.avtt-roll-formula-button").off('click.avttRoll').on('click.avttRoll', function(clickEvent) {
+  $currTarget.find("button.avtt-roll-formula-button").off('pointerdown.avttRoll touchstart.avttRoll').on('pointerdown.avttRoll touchstart.avttRoll', function(clickEvent) {
+    if (clickEvent.button === 2) return;
+    clickEvent.preventDefault();
     clickEvent.stopPropagation();
-
+    clickEvent.stopImmediatePropagation();
     const slashCommand = $(clickEvent.currentTarget).attr("data-slash-command");
     const followingText = $(clickEvent.currentTarget)[0].nextSibling?.textContent?.trim()?.split(' ')[0]
     const damageType = followingText && window.ddbConfigJson.damageTypes.some(d => d.name.toLowerCase() == followingText.toLowerCase()) ? followingText : undefined     
@@ -1150,7 +1289,7 @@ function add_journal_roll_buttons(target, tokenId=undefined, specificImage=undef
     }
     
     
-    if (rollData.rollType === "damage") {
+    if (rollData.rollType === "damage" || (rollData.expression !== "1d20" && !/^1d20/gi.test(rollData.expression))) {
       const followingText = this.nextSibling?.textContent?.trim()?.split(' ')[0]
       const damageType = followingText && window.ddbConfigJson.damageTypes.some(d => d.name.toLowerCase() == followingText.toLowerCase()) ? followingText : undefined
       damage_dice_context_menu(rollData.expression, rollData.modifier, rollData.rollTitle, rollData.rollType, tokenName, tokenImage, entityType, tokenId, damageType, undefined)
@@ -1197,24 +1336,48 @@ function notify_player_join() {
 /**
  * Load dice configuration from DDB.
  */
-function init_my_dice_details() {
-  get_cobalt_token(function (token) {
-    window.ajaxQueue.addRequest({
-      type: 'GET',
-      url: "https://dice-service.dndbeyond.com/diceuserconfig/v1/get",
-      contentType: "application/json; charset=utf-8",
-      dataType: 'json', // added data type
-      beforeSend: function (xhr) {
-        xhr.setRequestHeader('Authorization', 'Bearer ' + token);
-      },
-      xhrFields: {
-        withCredentials: true
-      },
-      success: function (res) {
-        window.mydice = res
-      }
+function extract_dice_sets(response) {
+  const diceFamilies = response?.data?.familySets ?? response?.data?.diceSets ?? response?.familySets ?? response?.diceSets ?? response?.data ?? response;
+  if (!Array.isArray(diceFamilies)) return [];
+
+  return diceFamilies.flatMap(family => family?.sets?.definitionData ?? []);
+}
+
+function init_my_dice_details(){
+  window.diceDetailsPromise = new Promise(resolve => {
+    get_cobalt_token(function (token) {
+      const request = url => new Promise(requestResolve => {
+        window.ajaxQueue.addRequest({
+          type: 'GET',
+          url,
+          contentType: "application/json; charset=utf-8",
+          dataType: 'json',
+          beforeSend: function (xhr) {
+            xhr.setRequestHeader('Authorization', 'Bearer ' + token);
+          },
+          xhrFields: {
+            withCredentials: true
+          },
+          success: requestResolve,
+          error: function(xhr, status, error) {
+            console.warn(`Dice service request failed for ${url}`, status, error);
+            requestResolve(undefined);
+          }
+        });
+      });
+
+      Promise.all([
+        request("https://dice-service.dndbeyond.com/diceuserconfig/v1/get"),
+        request("https://dice-service.dndbeyond.com/dice/v1/getallfamilysets")
+      ]).then(([diceConfig, familySets]) => {
+        window.mydice = diceConfig;
+        window.diceSets = extract_dice_sets(familySets);
+        resolve({diceConfig, diceSets: window.diceSets});
+      });
     });
   });
+
+  return window.diceDetailsPromise;
 }
 /**
  * Attempts to convert the output of an rpgDiceRoller DiceRoll to the DDB format.
@@ -1294,137 +1457,240 @@ function process_monitored_logs() {
   });
   return processedLogs.join('\n');
 }
-function inject_dice(){
 
-  $('body #site').append(`
-    <div class='container'>
-        <div id="encounter-builder-root" data-config="{&quot;assetBasePath&quot;:&quot;https://media.dndbeyond.com/encounter-builder&quot;,&quot;authUrl&quot;:&quot;https://auth-service.dndbeyond.com/v1/cobalt-token&quot;,&quot;campaignDetailsPageBaseUrl&quot;:&quot;https://www.dndbeyond.com/campaigns&quot;,&quot;campaignServiceUrlBase&quot;:&quot;https://www.dndbeyond.com/api/campaign&quot;,&quot;characterServiceUrlBase&quot;:&quot;https://character-service-scds.dndbeyond.com/v2/characters&quot;,&quot;diceApi&quot;:&quot;https://dice-service.dndbeyond.com&quot;,&quot;gameLogBaseUrl&quot;:&quot;https://www.dndbeyond.com&quot;,&quot;ddbApiUrl&quot;:&quot;https://api.dndbeyond.com&quot;,&quot;ddbBaseUrl&quot;:&quot;https://www.dndbeyond.com&quot;,&quot;ddbConfigUrl&quot;:&quot;https://www.dndbeyond.com/api/config/json&quot;,&quot;debug&quot;:false,&quot;encounterServiceUrl&quot;:&quot;https://encounter-service.dndbeyond.com/v1&quot;,&quot;featureFlagsDomain&quot;:&quot;https://api.dndbeyond.com&quot;,&quot;mediaBucket&quot;:&quot;https://media.dndbeyond.com&quot;,&quot;monsterServiceUrl&quot;:&quot;https://monster-service.dndbeyond.com/v1/Monster&quot;,&quot;sourceUrlBase&quot;:&quot;https://www.dndbeyond.com/sources/&quot;,&quot;subscriptionUrl&quot;:&quot;https://www.dndbeyond.com/subscribe&quot;,&quot;toastAutoDeleteInterval&quot;:3000000}" >
-           <div class="dice-rolling-panel">
-              <div class="dice-toolbar  ">
-                 <div class="dice-toolbar__dropdown ">
-                    <div class=" dice-toolbar__dropdown-die"><span class="dice-icon-die dice-icon-die--d20"></span></div>
-                    <div role="group" class="MuiButtonGroup-root MuiButtonGroup-outlined dice-toolbar__target css-3fjwge" aria-label="roll actions">
-                       <button class="MuiButtonBase-root MuiButton-root MuiButton-outlined MuiButton-outlinedPrimary MuiButton-sizeMedium MuiButton-outlinedSizeMedium MuiButtonGroup-grouped MuiButtonGroup-groupedHorizontal MuiButtonGroup-groupedOutlined MuiButtonGroup-groupedOutlinedHorizontal MuiButtonGroup-groupedOutlinedPrimary MuiButton-root MuiButton-outlined MuiButton-outlinedPrimary MuiButton-sizeMedium MuiButton-outlinedSizeMedium MuiButtonGroup-grouped MuiButtonGroup-groupedHorizontal MuiButtonGroup-groupedOutlined MuiButtonGroup-groupedOutlinedHorizontal MuiButtonGroup-groupedOutlinedPrimary css-79xub" tabindex="0" type="button">
-                          <div class="MuiBox-root css-dgzhqv">
-                             <p class="MuiTypography-root MuiTypography-body1 dice-toolbar__target-roll css-9l3uo3">Roll</p>
-                          </div>
-                       </button>
-                    </div>
-                    <div class="dice-toolbar__dropdown-top" style="display: none;">
-                       <div class="dice-die-button" data-dice="d20">
-                          <span class="dice-icon-die dice-icon-die--d20"></span>
-                          <div class="dice-die-button__tooltip">
-                             <div class="dice-die-button__tooltip__pip"></div>
-                             d20
-                          </div>
-                       </div>
-                       <div class="dice-die-button" data-dice="d12">
-                          <span class="dice-icon-die dice-icon-die--d12"></span>
-                          <div class="dice-die-button__tooltip">
-                             <div class="dice-die-button__tooltip__pip"></div>
-                             d12
-                          </div>
-                       </div>
-                       <div class="dice-die-button" data-dice="d10">
-                          <span class="dice-icon-die dice-icon-die--d10"></span>
-                          <div class="dice-die-button__tooltip">
-                             <div class="dice-die-button__tooltip__pip"></div>
-                             d10
-                          </div>
-                       </div>
-                       <div class="dice-die-button" data-dice="d100">
-                          <span class="dice-icon-die dice-icon-die--d100"></span>
-                          <div class="dice-die-button__tooltip">
-                             <div class="dice-die-button__tooltip__pip"></div>
-                             d100
-                          </div>
-                       </div>
-                       <div class="dice-die-button" data-dice="d8">
-                          <span class="dice-icon-die dice-icon-die--d8"></span>
-                          <div class="dice-die-button__tooltip">
-                             <div class="dice-die-button__tooltip__pip"></div>
-                             d8
-                          </div>
-                       </div>
-                       <div class="dice-die-button" data-dice="d6">
-                          <span class="dice-icon-die dice-icon-die--d6"></span>
-                          <div class="dice-die-button__tooltip">
-                             <div class="dice-die-button__tooltip__pip"></div>
-                             d6
-                          </div>
-                       </div>
-                       <div class="dice-die-button" data-dice="d4">
-                          <span class="dice-icon-die dice-icon-die--d4"></span>
-                          <div class="dice-die-button__tooltip">
-                             <div class="dice-die-button__tooltip__pip"></div>
-                             d4
-                          </div>
-                       </div>
-                    </div>
-                 </div>
-              </div>
-              <canvas class="dice-rolling-panel__container" width="1917" height="908" data-engine="Babylon.js v6.3.0" touch-action="none" tabindex="1" style="touch-action: none; -webkit-tap-highlight-color: transparent;"></canvas>
-           </div>
-        </div> 
-        <script src="https://media.dndbeyond.com/encounter-builder/static/js/main.221d749b.js"></script>
 
-        <style>
 
-          .dice-rolling-panel,.dice-rolling-panel__container {
-              width: 100%;
-              height: 100%;
-              position: fixed;
-              top: 0;
-              pointer-events: none;
-              left: 0;
-          }
+let diceWorkerUrlsPromise;
 
-          .dice-rolling-panel .dice-toolbar {
-              position: fixed;
-              z-index: 1;
-              bottom: 10px;
-              left: 10px;
-              pointer-events: all
-          }
+function discover_dice_worker_urls() {
+  diceWorkerUrlsPromise ??= new Promise(resolve => {
+    const maxAttempts = 3;
+    const retryBaseDelay = 2000;
+    const attemptTimeout = 15000;
+    let attempt = 0;
 
-        </style>
-    </div>
-  `);
-  if(window.encounterObserver){
-    window.encounterObserver.disconnect();
-  }
-
-  window.encounterObserver = new MutationObserver(function(mutationList, observer) {
-
-    mutationList.forEach(mutation => {
-      try {
-        let mutationTarget = $(mutation.target);
-        
-        if(mutationTarget.is('.encounter-details, .encounter-builder, .release-indicator')){
-          mutationTarget.remove();
+    const discover = () => {
+      attempt++;
+      const iframe = document.createElement('iframe');
+      let pollingInterval;
+      let timeout;
+      let settled = false;
+      const finish = workerUrls => {
+        if (settled) return;
+        settled = true;
+        clearInterval(pollingInterval);
+        clearTimeout(timeout);
+        iframe.remove();
+        if (workerUrls || attempt >= maxAttempts) {
+          resolve(workerUrls);
+        } else {
+          setTimeout(discover, retryBaseDelay * Math.pow(2, attempt - 1));
         }
-        if($(mutation.addedNodes).is('.encounter-builder, .release-indicator')){
-          $(mutation.addedNodes).remove();
+      };
+      const findWorkerUrls = () => {
+        try {
+          const resourceUrls = iframe.contentWindow.performance
+            .getEntriesByType('resource')
+            .map(entry => entry.name);
+          const physicsWorkerUrl = resourceUrls.find(url => url.includes('/dice/mobile/physicsWorker.'));
+          const renderedWorkerUrl = resourceUrls.find(url => url.includes('/dice/mobile/renderedWorker.'));
+          if (physicsWorkerUrl && renderedWorkerUrl) {
+            finish({physicsWorkerUrl, renderedWorkerUrl});
+          }
+        } catch (error) {
+          console.debug('Dice worker URLs are not available from the My Dice iframe yet', error);
         }
-      } catch(error){
-        console.warn("non_sheet_observer failed to parse mutation", error, mutation);
-      }
-    });
-  })
+      };
 
- 
- const mutation_target = $('#encounter-builder-root')[0];
- //observers changes to body direct children being removed/added
- const mutation_config = { attributes: false, childList: true, characterData: false, subtree: true };
- window.encounterObserver.observe(mutation_target, mutation_config);
+      iframe.hidden = true;
+      iframe.addEventListener('load', () => {
+        findWorkerUrls();
+        pollingInterval = setInterval(findWorkerUrls, 250);
+      }, {once: true});
+      timeout = setTimeout(() => finish(undefined), attemptTimeout);
+      iframe.src = '/my-dice';
+      document.body.append(iframe);
+    };
 
- setTimeout(function(){
-   window.encounterObserver.disconnect();
-   delete window.encounterObserver;
- }, 300000);
- 
+    discover();
+  });
+
+  return diceWorkerUrlsPromise;
 }
 
+function create_dice_worker(url, name) {
+  return new Worker(url, {
+    name: JSON.stringify({
+      name,
+      isDebug: false,
+      isPhysicsDebug: false,
+      isMobileApp: false,
+      isAnimationsDisabled: false,
+      nodeEnv: 'production',
+      env: 'production',
+      user: {
+        id: window.myUser,
+      }
+    }),
+    type: 'module'
+  });
+}
+
+function initialize_dice_worker(worker, drawingSurface, frameloop) {
+  const props = {dpr: 1, frameloop};
+  worker.postMessage({
+    type: 'init',
+    payload: {
+      props,
+      drawingSurface,
+      width: drawingSurface.width,
+      height: drawingSurface.height,
+      top: 0,
+      left: 0,
+      pixelRatio: 1
+    }
+  }, [drawingSurface]);
+  worker.postMessage({type: 'props', payload: props});
+}
+
+async function configure_rendered_dice(renderer, physicsWorker) {
+  const {diceSets = []} = await (window.diceDetailsPromise ?? Promise.resolve({diceSets: window.diceSets ?? []}));
+  const {setId} = window.mydice.data;
+  const userSettings = window.mydice?.data?.settings;
+
+  renderer.postMessage({type: 'diceSets', payload: diceSets});
+  renderer.postMessage({type: 'preRoll', payload: {data: {setId}}});
+  renderer.postMessage({
+    type: 'userSettings',
+    payload: {
+      shadowQuality: userSettings?.shadowQuality,
+      particlesEnabled: userSettings?.particlesEnabled,
+      volume: userSettings?.volume
+    }
+  }); 
+     
+  renderer.postMessage({type: 'props', payload: {dpr: 1, frameloop: 'demand'}});
+}
+
+function play_rendered_dice_sound({url, volume = 0.5} = {}) {
+  if (!url) return;
+  const normalizedVolume = Number(volume) * (window.mydice?.data?.settings?.volume ?? 0.5);
+  const audio = new Audio(url);
+  audio.volume = Math.max(0, Math.min(1, normalizedVolume > 1 ? normalizedVolume / 100 : normalizedVolume));
+  audio.play().catch(error => noisy_log(2, 'Unable to play rendered dice sound', error));
+}
+
+
+
+async function add_new_dice(){
+  const workerUrls = await discover_dice_worker_urls();
+  if (!workerUrls) {
+    console.warn('Unable to discover DDB dice worker URLs after multiple attempts');
+    return;
+  }
+  const {physicsWorkerUrl, renderedWorkerUrl} = workerUrls;
+  const canvas = document.createElement("canvas");
+  canvas.classList.add('dice-container');
+
+
+  const canvas2 = document.createElement("canvas");
+
+  canvas2.classList.add('dice-container');
+
+  const getDiceViewportSize = () => ({
+    width: Math.max(0, window.innerWidth - (is_sidebar_visible() ? get_sidebar_width() : 0)),
+    height: window.innerHeight
+  });
+  const resizeDiceCanvases = mydebounce(() => {
+    const {width, height} = getDiceViewportSize();
+
+    canvas.style.width = `${width}px`;
+    canvas.style.height = `${height}px`;
+    canvas2.style.width = `${width}px`;
+    canvas2.style.height = `${height}px`;
+
+    physicsWorker.postMessage({
+        "type": "resize",
+        "payload": {
+            "width": width,
+            "height": height,
+            "top": 0,
+            "left": 0,
+        }
+
+    });
+    renderer.postMessage({
+        "type": "resize",
+        "payload": {
+            "width": width,
+            "height": height,
+            "top": 0,
+            "left": 0,
+        }
+    });
+  }, 500);
+  
+  const initialSize = getDiceViewportSize();
+  canvas.width = initialSize.width;
+  canvas2.width = initialSize.width;
+  canvas.height = initialSize.height;
+  canvas2.height = initialSize.height;
+
+  $('body').append(canvas,canvas2);
+
+
+  const physicsWorker = create_dice_worker(physicsWorkerUrl, 'physics');
+  const renderer = create_dice_worker(renderedWorkerUrl, 'rendered');
+
+  const offscreen = canvas.transferControlToOffscreen();
+  const offscreen2 = canvas2.transferControlToOffscreen();
+
+
+  initialize_dice_worker(physicsWorker, offscreen, 'never');
+  initialize_dice_worker(renderer, offscreen2, 'demand');
+
+
+
+  
+  physicsWorker.onmessage = (e)=>{
+      if(e.data.type == 'preRoll'){
+        renderer.postMessage(e.data);
+      }   
+      else  if (e.data.type === 'componentMounted') {
+        physicsWorker.postMessage({type: 'props', payload: {dpr: 1, frameloop: 'never'}}); 
+      }
+      else if(e.data.type == 'renderDice'){
+        renderer.postMessage(e.data)
+      } else {
+        noisy_log('Unhandled physics worker message', e.data);
+      }
+  }
+  renderer.onmessage = event => handle_rendered_dice_message(event, renderer, physicsWorker);
+  $(window).off('resize.canvas2').on('resize.canvas2', resizeDiceCanvases);
+}
+function handle_rendered_dice_message(event, renderer, physicsWorker) {
+  const {type, payload} = event.data;
+  if (type === 'componentMounted') {
+    configure_rendered_dice(renderer, physicsWorker);
+  } else if (type === 'playSound' || type === 'PlaySound') {
+    play_rendered_dice_sound(payload);
+  } else if(type === 'dice/roll/fulfilled'){
+    window.diceRoller.sendNewFulfilled();
+  } else if(type === 'removeRoll'){
+    physicsWorker.postMessage(event.data);
+  } else if(type === 'workerLog'){
+    noisy_log('Dice render worker log', payload); 
+  } else if(type === 'preRoll'){
+    if(payload.message?.data?.rolls?.length > 0){
+      physicsWorker.postMessage({
+          payload: {...payload.message},
+          type: 'startRoll'
+      });
+    }
+  } else {
+    noisy_log('Unhandled dice render worker message', event.data);
+  }
+}
 function sendPointerEvent(targetSelector='', type="pointerdown", options = {}){
   const pointerEvent = new PointerEvent(type, options)
   const target = $(targetSelector);
@@ -1497,7 +1763,13 @@ function is_spectator_page() {
 function is_encounters_page() {
   return window.location.search.includes("dm=true");
 }
-
+function get_logging_level() {
+  const match = window.location.search.match(/log=(\d+)/);
+  if (match) {
+    return parseInt(match[1]);
+  }
+  return undefined;
+}
 /** @return {boolean} true if the url has abovevtt=true, and is one of the pages that we allow the app to run on */
 function is_abovevtt_page() {
   // we only run the app on the enounters page (DM), and the characters page (players)
@@ -1613,7 +1885,9 @@ function showErrorMessage(error, ...extraInfo) {
 
   const stack = error.stack || new Error().stack;
   error.doNotRelog = true;
-  console.error(error, ...extraInfo);
+  if (!stack.includes("console.error")) {
+    console.error(error, ...extraInfo);
+  }
   if(stack.includes('Internal Server Error') && stack.includes('AboveApi.getScene')){
     if(!window.DM){
       extraInfo.push('<br/><b>The last scene players were on may have been deleted by the DM. Ask the DM to click the player button beside an existing scene. Even if one is already highlighted click it again to update the server info.</b>')
@@ -1621,9 +1895,9 @@ function showErrorMessage(error, ...extraInfo) {
     else{
       extraInfo.push('<br/><b>The scene you are trying to load does not exist. You may have deleted it - try setting the DM scene to an existing map.</b>')
     }
-    
   }
-  
+  const messageOnly = extraInfo.shift() == 'messageOnly';
+
   const extraStrings = extraInfo.map(ei => {
     if (typeof ei === "object") {
       return JSON.stringify(ei)
@@ -1632,21 +1906,21 @@ function showErrorMessage(error, ...extraInfo) {
     }
   }).join('<br />');
   if(typeof error.message == 'object'){
-    error.message = JSON.strigify(error.message);
+    error.message = JSON.stringify(error.message);
   }
   let container = $("#above-vtt-error-message");
   if ($('#error-message-stack').length == 0) {
     $("#above-vtt-error-message").remove();
     const container = $(`
-      <div id="above-vtt-error-message">
-        <h2>An unexpected error occurred!</h2>
+      <div id="above-vtt-error-message" ${messageOnly ? `class="small-error"` : ''}>
+        ${messageOnly ? '' : '<h2>An unexpected error occurred!</h2>'}
         <h3 id="error-message">${error.message}</h3>
         <div id="error-message-details" style="max-height: 200px; overflow-y: auto;">${extraStrings}</div>
-        <pre id="error-message-stack" style='max-height: 200px;'>${error.message}<br/>${extraStrings}</pre>
+       ${messageOnly ? '' : `<pre id="error-message-stack" style='max-height: 200px;'>${error.message}<br/>${extraStrings}</pre>`}
         <div id="error-github-issue"></div>
         <div class="error-message-buttons">
           <button id="close-error-button">Close</button>
-          <button id="copy-error-button">Copy logs to clipboard</button>
+          ${messageOnly ? '' : `<button id="copy-error-button">Copy logs to clipboard</button>`}
         </div>
       </div>
     `);
@@ -2060,7 +2334,7 @@ function find_pc_by_player_id(idOrSheet, useDefault = true) {
   }
   if (!window.pcs) {
     if(is_abovevtt_page())
-      console.error("window.pcs is undefined");
+      noisy_log("window.pcs is undefined");
     return useDefault ? generic_pc_object(false) : undefined;
   }
   const regexStr = `characters/${idOrSheet}$`;
@@ -2116,12 +2390,12 @@ function update_pc_with_data(playerId, data) {
     console.warn("update_pc_with_data was given invalid data", playerId, data);
     return;
   }
-  if(!window.pcs){
-    console.warn('update_pc_with_data called before window.pcs initialized');
+  if(!window.pcs || !window.PC_TOKENS_NEEDING_UPDATES){
+    noisy_log(3, 'update_pc_with_data called before window.pcs initialized');
     return;
   }
   const index = window.pcs.findIndex(pc => pc.sheet.includes(playerId));
-  if (index < 0) {
+if (index < 0) {
     console.warn("update_pc_with_data could not find pc with id", playerId);
     return;
   }
@@ -2644,6 +2918,7 @@ async function updateTokenSrc(url, container, video=false){
     container.attr('src', url);
     container.css('background', `url(${url})`)
   }
+  container.find('video').attr('src', url);
 }
 
 const throttleGoogleApi = throttledQueue('throttleGoogleApi', 1, 5000); // map throttle
@@ -3160,8 +3435,8 @@ function createDialogMenu(rootId, options) {
   return dialog[0]; //note: return native element, NOT jquery
 }
 function basic_sanitize_html(html){
-  let sanitized = DOMPurify.sanitize(html,{ALLOWED_TAGS: ['video','img','div','p', 'b', 'button', 'span', 'path', 'polygon', 'rect', 'svg', 'circle', 'a', 'hr', 'ul', 'li', 'ol', 'h3', 'h2', 'h4', 'h1', 'table', 'thead', 'tbody', 'tr', 'td', 'th', 'br', 'input', 'strong', 'em'], ADD_ATTR: ['target', 'contenteditable']}); //This array needs to include all HTML elements the extension sends via chat.
-  sanitized = sanitized.replace(/(\n\s{2,})+(<)|(>)(\n\s{2,})+|(\s{2,}\n)+(<)|(>)(\s{2,}\n)+/gi, '$2$3$6$7');
+  let sanitized = DOMPurify.sanitize(html,{ALLOWED_TAGS: ['video','img','div','p', 'b', 'i', 'button', 'span', 'path', 'polygon', 'rect', 'svg', 'circle', 'a', 'hr', 'ul', 'li', 'ol', 'h3', 'h2', 'h4', 'h1', 'table', 'thead', 'tbody', 'tr', 'td', 'th', 'br', 'input', 'strong', 'em'], ADD_ATTR: ['target', 'contenteditable']}); //This array needs to include all HTML elements the extension sends via chat.
+  sanitized = sanitized.replace(/(?=([^\S\n]*(?:\n[^\S\n]*){2,}))\1(<)|(>)(?=([^\S\n]*(?:\n[^\S\n]*){2,}))\4/gi, '$2$3');
   return sanitized;
 }
 

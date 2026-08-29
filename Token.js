@@ -626,8 +626,8 @@ class Token {
 		$("#aura_" + id.replaceAll("/", "")).remove();
 		$(`.aura-element-container-clip[id='${id}']`).parent().remove()
 		$(`[data-darkness='darkness_${id}']`).remove();
-		$(`[data-notatoken='notatoken_${id}']`).remove()
-
+		$(`[data-notatoken='notatoken_${id}']`).remove();
+		$(`.boss-hp-bar[data-id='${id}']`).remove();
 		if(this.options?.audioChannel?.audioId != undefined){
 			window.MIXER.deleteChannel(this.options.audioChannel.audioId)
 		}
@@ -912,15 +912,15 @@ class Token {
 				window.ON_SCREEN_TOKENS[this.options.id].onScreenDarknessToken = tokenClone;
 
                 const copyImage = tokenClone.find('.token-image');
-
-				if(this.options.imgsrc.startsWith('above-bucket-not-a-url')){
-					const fileSrc = this.options.imgsrc.replace('above-bucket-not-a-url', '');
+				const imageSrc = this.options.aoeImage ?? this.options.imgsrc;
+				if(imageSrc.startsWith('above-bucket-not-a-url')){
+					const fileSrc = imageSrc.replace('above-bucket-not-a-url', '');
 					if (!copyImage.attr('src')?.includes(encodeURI(fileSrc))){
-						updateTokenSrc(this.options.imgsrc, copyImage, this.options.videoToken)
+						updateTokenSrc(imageSrc, copyImage, this.options.videoToken)
 					}
 				}
-				else if (copyImage.attr('src') != parse_img(this.options.imgsrc)){
-					updateTokenSrc(parse_img(this.options.imgsrc), copyImage, this.options.videoToken)
+				else if (copyImage.attr('src') != parse_img(imageSrc)){
+					updateTokenSrc(parse_img(imageSrc), copyImage, this.options.videoToken)
 				}
 			}
 
@@ -1048,7 +1048,7 @@ class Token {
 		
 		}
 	}
-
+	
 	/**
 	 * updates the color of the health aura if enabled
 	 * @param token jquery selected div with the class "token"
@@ -1060,7 +1060,7 @@ class Token {
 			$(`.token[data-id='${this.options.id}']`).append(hpvisualbar);
 		}
 
-
+		const bossHealthBar = this.options.healthauratype == "boss";
 		if(this.options.healthauratype == undefined){
 			if(this.options.disableaura){
 				this.options.healthauratype = "none"
@@ -1082,15 +1082,190 @@ class Token {
 			} else if(this.options.healthauratype == "aura-bloodied-50"){
 				this.options.disableaura = false;
 				this.options.enablepercenthpbar = false;
+			} else if(bossHealthBar){
+				this.options.disableaura = true;
+				this.options.enablepercenthpbar = false;
 			}
 		}
-
+		
+		token.toggleClass("boss", bossHealthBar);
+		
 		if (this.maxHp > 0) {
 			token.css('--hp-percentage', `${this.hpPercentage}%`);
 			token.css('--temp-hp-percentage', `${this.tempHpPercentage}%`);
 			token.css('--total-percentage', `${this.tempHpPercentage + this.hpPercentage}%`)
 		}
+		if(bossHealthBar){
+			
+			const body = $(`body`);
 
+			let hpBar = $(`.boss-hp-bar[data-id='${this.options.id}']`);
+			if (hpBar.length < 1) {
+				hpBar = $(`
+					<div class='boss-hp-bar' data-id='${this.options.id}'>
+						<div class="hp-bar-track">
+							<div class="hp-base">
+								<!-- First Temp HP layer (fills remaining space up to 100%) -->
+								<div class="hp-temp-layer1"></div>
+							</div>
+							<!-- Second Temp HP layer (overflow when Total > 100%) -->
+							<div class="hp-temp-layer2"></div>
+						</div>
+						<span class="token-name"></span>
+						<span class="token-hp"></span>
+					</div>
+				`);
+				
+				const positionAdjust = body.find('.boss-hp-bar').length * 60;
+				hpBar.css('--bottom-adjust', `${positionAdjust}px`);
+				body.append(hpBar);
+			}
+			const tokenName = `${this.options.revealname || window.DM ? this.options.name : ""}`;
+			const tokenHpText = `${window.DM || this.options.player_owned ? `${this.baseHp}${this.tempHp > 0 ? ` (+${this.tempHp})` : ""} / ${this.maxHp}` : ""}`;
+			hpBar.find('.token-name').text(tokenName);
+			hpBar.find('.token-hp').text(tokenHpText);
+						
+			const animateBossHealthBar = () => {		
+				const hpBase = hpBar.find('.hp-base');
+				const hpTemp1 = hpBar.find('.hp-temp-layer1');
+				const hpTemp2 = hpBar.find('.hp-temp-layer2');
+
+				const newHpPct = Math.min(100, Math.max(0, Math.round(this.hpPercentage)));
+				const rawTotal = Math.round(this.hpPercentage + this.tempHpPercentage);
+				const temp1RawPct = Math.min(100 - newHpPct, Math.round(this.tempHpPercentage));
+				const newTemp1Pct = newHpPct > 0 ? Math.round((temp1RawPct / newHpPct) * 100) : 0;
+				const newTemp2Pct = Math.max(0, rawTotal - 100);
+
+
+				const oldHpPct = Math.round(parseFloat(hpBase.css('--hp-percentage'))) || 0;
+				const oldTemp1Pct = Math.round(parseFloat(hpTemp1.css('--temp-hp1-percentage'))) || 0;
+				const oldTemp2Pct = Math.round(parseFloat(hpTemp2.css('--temp-hp2-percentage'))) || 0;
+
+
+				const oldTemp1Raw = Math.round((oldTemp1Pct / 100) * oldHpPct);
+
+
+				const startHp = oldHpPct;
+				const startTemp1Raw = oldTemp1Raw;
+				const startTemp2 = oldTemp2Pct;
+
+				const targetHp = newHpPct;
+				const targetTemp1Raw = temp1RawPct;
+				const targetTemp2 = newTemp2Pct;
+
+
+				const distHp = Math.abs(targetHp - startHp);
+				const distTemp1 = Math.abs(targetTemp1Raw - startTemp1Raw);
+				const distTemp2 = Math.abs(targetTemp2 - startTemp2);
+				const totalDist = distHp + distTemp1 + distTemp2;
+
+				if (totalDist === 0) return;
+
+				const MAX_BUDGET = 5.5; 
+				const MIN_BUDGET = 3.0; 
+
+				let duration = 0;
+				if (totalDist < 5) {
+					duration = Math.max(0.8, (totalDist / 100) * MAX_BUDGET * 2.5);
+				} else {
+					duration = Math.max(MIN_BUDGET, (totalDist / 100) * MAX_BUDGET);
+				}
+				function easeBossCinematic(x) {
+					return 1 - Math.pow(1 - x, 4); 
+				}
+
+				if (this.bossAnimation) cancelAnimationFrame(this.bossAnimation);
+
+				function setBorderTip(currentHp, currentTemp1, currentTemp2) {
+					hpBase.css('border-right-color', 'transparent');
+					hpTemp1.css('border-right-color', 'transparent');
+					hpTemp2.css('border-right-color', 'transparent');
+
+					if (currentTemp2 > 0) {
+						hpTemp2.css('border-right-color', '#ffffff');
+					} else if (currentTemp1 > 0) {
+						hpTemp1.css('border-right-color', '#ffffff');
+					} else if (currentHp > 0) {
+						hpBase.css('border-right-color', '#ffffff');
+					}
+				}
+
+				const startTime = performance.now();
+				const durationMs = duration * 1000;
+				const isDamage = (startHp + startTemp1Raw + startTemp2) > (targetHp + targetTemp1Raw + targetTemp2);
+				const self = this;
+				function animateStep(currentTime) {
+					const elapsed = currentTime - startTime;
+					const progress = Math.min(1, elapsed / durationMs);
+					
+					const easedProgress = easeBossCinematic(progress);		
+					const currentDistanceTraveled = totalDist * easedProgress;
+
+					let currentHp = startHp;
+					let currentTemp1Raw = startTemp1Raw;
+					let currentTemp2 = startTemp2;
+
+					if (isDamage) {
+						let remainingDist = currentDistanceTraveled;
+
+						const drainTemp2 = Math.min(remainingDist, distTemp2);
+						currentTemp2 = startTemp2 - drainTemp2;
+						remainingDist -= drainTemp2;
+
+						if (remainingDist > 0) {
+							const drainTemp1 = Math.min(remainingDist, distTemp1);
+							currentTemp1Raw = startTemp1Raw - drainTemp1;
+							remainingDist -= drainTemp1;
+						}
+						if (remainingDist > 0) {
+							const drainHp = Math.min(remainingDist, distHp);
+							currentHp = startHp - drainHp;
+						}
+					} else {
+						let remainingDist = currentDistanceTraveled;
+
+						const fillHp = Math.min(remainingDist, distHp);
+						currentHp = startHp + fillHp;
+						remainingDist -= fillHp;
+
+						if (remainingDist > 0) {
+							const fillTemp1 = Math.min(remainingDist, distTemp1);
+							currentTemp1Raw = startTemp1Raw + fillTemp1;
+							remainingDist -= fillTemp1;
+						}
+						if (remainingDist > 0) {
+							const fillTemp2 = Math.min(remainingDist, distTemp2);
+							currentTemp2 = startTemp2 + fillTemp2;
+						}
+					}
+
+					const currentTemp1Pct = currentHp > 0 ? (currentTemp1Raw / currentHp) * 100 : 0;
+
+					hpBase.css({
+						'transition': 'none',
+						'--hp-percentage': `${currentHp.toFixed(2)}%`
+					});
+					hpTemp1.css({
+						'transition': 'none',
+						'--temp-hp1-percentage': `${currentTemp1Pct.toFixed(2)}%`
+					});
+					hpTemp2.css({
+						'transition': 'none',
+						'--temp-hp2-percentage': `${currentTemp2.toFixed(2)}%`
+					});
+
+					setBorderTip(currentHp, currentTemp1Pct, currentTemp2);
+					if (progress < 1) {
+						self.bossAnimation = requestAnimationFrame(animateStep);
+					}
+				}
+
+				self.bossAnimation = requestAnimationFrame(animateStep);
+			}
+			animateBossHealthBar();
+		}else{
+			$(`.boss-hp-bar[data-id='${this.options.id}']`).remove();
+		}
 		const tokenHpAuraColor = token_health_aura(this.hpPercentage, this.options.healthauratype);
 		let paddingX = 0;
 		let paddingY = 0;
@@ -2159,6 +2334,12 @@ class Token {
 			return;
 		}
 		try{
+			if(window.DRAGGING && $(`#tokens .token.tokenselected[data-id='${this.options.id}']:not(.ui-draggable-disabled), #tokens .token[data-group-id='${this.options.groupId}'][data-id='${this.options.id}']`).length > 0) {
+				setTimeout(() => {
+					this.throttlePlace(animationDuration, sceneId, callback);
+				}, 1000);
+				return;
+			}
 			if(!this.options.id.includes('exampleToken') && (isNaN(parseFloat(this.options.left)) || isNaN(parseInt(this.options.top)))){// prevent errors with NaN positioned tokens - delete them as catch all. 
 				this.options.deleteableByPlayers = true;
 				this.delete();
@@ -2366,21 +2547,22 @@ class Token {
 				}
 				let oldImage =  old.find(".token-image,[data-img]")
 				// token uses an image for it's image
-				if (!this.options.imgsrc.startsWith("class")){
-					if(this.options.imgsrc.startsWith('above-bucket-not-a-url')){
+				const imageSrc = this.options.aoeImage ?? this.options.imgsrc;
+				if (!imageSrc.startsWith("class")){
+					if(imageSrc.startsWith('above-bucket-not-a-url')){
 						
-						const fileSrc = this.options.imgsrc.replace('above-bucket-not-a-url', '');
+						const fileSrc = imageSrc.replace('above-bucket-not-a-url', '');
 						if (!oldImage.attr('src')?.includes(encodeURI(fileSrc))) {
-							getAvttStorageUrl(this.options.imgsrc, true).then((url) => {
+							getAvttStorageUrl(imageSrc, true).then((url) => {
 								let oldFileExtension = oldImage.attr("src").split('.')[oldImage.attr("src").length - 1]
-								let newFileExtention = parse_img(this.options.imgsrc.split('.')[this.options.imgsrc.split('.').length - 1]);
+								let newFileExtention = parse_img(imageSrc.split('.')[imageSrc.split('.').length - 1]);
 								let imgClass = oldImage.attr('class')?.replaceAll('div-token-image', '');
 								let video = false;
 								if (oldFileExtension !== newFileExtention || window.videoTokenOld[this.options.id] != this.options.videoToken) {
 									oldImage.remove();
 									
 									let tokenImage;
-									if (this.options.videoToken == true || ['.mp4', '.webm', '.m4v'].some(d => this.options.imgsrc.includes(d))) {
+									if (this.options.videoToken == true || ['.mp4', '.webm', '.m4v'].some(d => imageSrc.includes(d))) {
 										tokenImage = $("<video disableRemotePlayback autoplay loop muted style='transform:" + imageTransform + "' class='" + imgClass + " div-token-image'/>");
 										video = true;
 									}
@@ -2449,16 +2631,16 @@ class Token {
 						}
 						
 					}
-					else if(oldImage.attr("src")!=parse_img(this.options.imgsrc) || window.videoTokenOld[this.options.id] != this.options.videoToken){
+					else if(oldImage.attr("src")!=parse_img(imageSrc) || window.videoTokenOld[this.options.id] != this.options.videoToken){
 						let oldFileExtension = oldImage.attr("src")?.split('.')[oldImage.attr("src").length-1]
-						let newFileExtention = parse_img(this.options.imgsrc.split('.')[this.options.imgsrc.split('.').length-1]);
+						let newFileExtention = parse_img(imageSrc.split('.')[imageSrc.split('.').length-1]);
 						let imgClass = oldImage.attr('class')?.replaceAll('div-token-image', '');
 						let video = false;
 						if(oldFileExtension !== newFileExtention || window.videoTokenOld[this.options.id] != this.options.videoToken){
 							oldImage.remove();
 							
 							let tokenImage;
-							if(this.options.videoToken == true || ['.mp4', '.webm','.m4v'].some(d => this.options.imgsrc.includes(d))){
+							if(this.options.videoToken == true || ['.mp4', '.webm','.m4v'].some(d => imageSrc.includes(d))){
 								tokenImage = $("<video disableRemotePlayback autoplay loop muted style='transform:"+imageTransform+"' class='"+imgClass+" div-token-image'/>");			
 								video = true;
 							} 
@@ -2474,12 +2656,12 @@ class Token {
 								const underDarkImage = tokenImage.clone();
 								underDarkImage.find('.token-image ~ .token-image').remove();
 								underDarkToken.append(underDarkImage);
-								updateTokenSrc(this.options.imgsrc, underDarkImage, video)
+								updateTokenSrc(imageSrc, underDarkImage, video)
 							}
 						}
 						window.videoTokenOld[this.options.id] = this.options.videoToken;
 						
-						updateTokenSrc(this.options.imgsrc, oldImage, video)
+						updateTokenSrc(imageSrc, oldImage, video)
 						$(`#combat_area tr[data-target='${this.options.id}'] img[class*='Avatar']`).attr("src", parse_img(this.options.imgsrc));
 						oldImage.off('dblclick.highlightToken').on('dblclick.highlightToken', function(e) {
 							self.highlight(true); // dont scroll
@@ -2733,15 +2915,15 @@ class Token {
 						let oldImage = $(`#tokens div[data-id='${this.options.id}'] .token-image`);
 						const copyImage = oldImage.clone();
 						underDarkToken.append(copyImage);
-						
-						if (this.options.imgsrc.startsWith('above-bucket-not-a-url')) {
-							const fileSrc = this.options.imgsrc.replace('above-bucket-not-a-url', '');
+						const imageSrc = this.options.aoeImage ?? this.options.imgsrc;
+						if (imageSrc.startsWith('above-bucket-not-a-url')) {
+							const fileSrc = imageSrc.replace('above-bucket-not-a-url', '');
 							if (!copyImage.attr('src')?.includes(encodeURI(fileSrc))) {
-								updateTokenSrc(this.options.imgsrc, copyImage, this.options.videoToken);
+								updateTokenSrc(imageSrc, copyImage, this.options.videoToken);
 							}
 						}
-						else if(copyImage.attr('src') != parse_img(this.options.imgsrc)){
-							updateTokenSrc(parse_img(this.options.imgsrc), copyImage, this.options.videoToken);
+						else if(copyImage.attr('src') != parse_img(imageSrc)){
+							updateTokenSrc(parse_img(imageSrc), copyImage, this.options.videoToken);
 						}
 				}  	
 				else{
@@ -3471,15 +3653,15 @@ class Token {
 						window.ON_SCREEN_TOKENS[this.options.id].onScreenDarknessToken = tokenClone;
 
 						let copyImage = tokenClone.find('.token-image')
-
-						if (this.options.imgsrc.startsWith('above-bucket-not-a-url')) {
-							const fileSrc = this.options.imgsrc.replace('above-bucket-not-a-url', '');
+						const imageSrc = this.options.aoeImage ?? this.options.imgsrc;
+						if (imageSrc.startsWith('above-bucket-not-a-url')) {
+							const fileSrc = imageSrc.replace('above-bucket-not-a-url', '');
 							if (!copyImage.attr('src')?.includes(encodeURI(fileSrc))) {
-								updateTokenSrc(this.options.imgsrc, copyImage, this.options.videoToken);
+								updateTokenSrc(imageSrc, copyImage, this.options.videoToken);
 							}
 						}
-						else if (copyImage.attr('src') != parse_img(this.options.imgsrc)) {
-							updateTokenSrc(parse_img(this.options.imgsrc), copyImage, this.options.videoToken);
+						else if (copyImage.attr('src') != parse_img(imageSrc)) {
+							updateTokenSrc(parse_img(imageSrc), copyImage, this.options.videoToken);
 						}
 					}	
 			    }
@@ -4713,7 +4895,11 @@ function rotation_towards_cursor(token, mousex, mousey, largerSnapAngle) {
 function rotation_towards_cursor_from_point(pointX, pointY, mousex, mousey, largerSnapAngle) {
 	const target = Math.atan2(mousey - pointY, mousex - pointX) + Math.PI * 3 / 2; // down = 0
 	const degrees = target * radToDeg;
-	const snap = (largerSnapAngle == true) ? 45 : 1; // if we ever allow hex, use 45 for square and 60 for hex
+	const snap = (largerSnapAngle == true) ? 
+					['3', '2'].includes(window.CURRENT_SCENE_DATA.gridType) ? 
+						30 : 
+						45 : 
+					1;
 	return (Math.round(degrees / snap) * snap + 360.0) % 360.0;
 }
 /// rotates all selected tokens to the specified newRotation
@@ -5028,12 +5214,19 @@ function install_grabbers() {
 			remove_selected_token_bounding_box(false, true);
 		},
 		drag: function(d,e) {
-			const mouseAngle = Math.atan2(d.y - d.centerPointRotateOrigin.y, d.x - d.centerPointRotateOrigin.x) * (180 / Math.PI);
+			let mouseAngle = Math.atan2(d.y - d.centerPointRotateOrigin.y, d.x - d.centerPointRotateOrigin.x) * (180 / Math.PI);
+			const snap = (shiftHeld == true) ? 
+				['3', '2'].includes(window.CURRENT_SCENE_DATA.gridType) ? 
+					30 : 
+					45 : 
+				1;
+		
 			d.angle = (360 + mouseAngle - d.startAngle) % 360;
+			d.angle = (Math.round(d.angle / snap) * snap + 360.0) % 360.0;
 			if(window.CURRENTLY_SELECTED_TOKENS.length == 1 &&
 			   window.TOKEN_OBJECTS[window.CURRENTLY_SELECTED_TOKENS[0]].isAoe()){
 				d.angle = rotation_towards_cursor_from_point(d.centerPointRotateOrigin.x, d.centerPointRotateOrigin.y,
-									     d.x, d.y);
+									     d.x, d.y, e.shiftKey);
 				// account for group rotation grabber being at corner
 				d.angle -= parseFloat($(`.token[data-id='${window.CURRENTLY_SELECTED_TOKENS[0]}']`).css('--token-rotation')); 
 			}

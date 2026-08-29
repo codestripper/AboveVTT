@@ -1550,7 +1550,7 @@ function token_context_menu_expanded(tokenIds, e, crossScenePortalData) {
 			const imageSrc = token.options.imgsrc.startsWith('above-bucket-not-a-url') ? await getAvttStorageUrl(token.options.imgsrc) : token.options.imgsrc;
 			let tokenImage = $(`<div class="image" style="display: block; max-width:100%;"><${(token.options.videoToken == true || ['.mp4', '.webm', '.m4v'].some(d => imageSrc.includes(d))) ? 'video disableremoteplayback muted' : 'img'} class='magnify' style='max-width:100%;' href='${imageSrc}' src='${imageSrc}'/>  </div>`);
 			
-			if(typeof token.options.monster == 'number' && token.options.itemType == 'monster' && (token.options.alternativeImages == undefined || token.options.imgsrc == cached_monster_items[token.options.monster]?.monsterData?.avatarUrl)){
+			if(typeof token.options.monster == 'number' && token.options.itemType == 'monster' && (token.options.alternativeImages?.length == 0 || token.options.imgsrc == cached_monster_items[token.options.monster]?.monsterData?.avatarUrl)){
 
 				if(cached_monster_items[token.options.monster] != undefined){
 					setImageAttr(tokenImage, token);
@@ -1683,21 +1683,22 @@ function token_context_menu_expanded(tokenIds, e, crossScenePortalData) {
 		`);
 		nameWrapper.append(nameInput); // input below label
 		nameWrapper.append(nameGeneratorButton);
-
-
-		
 		body.append(nameWrapper);
-		let changeImageMenuButton = $("<button id='changeTokenImage' class='material-icons'>Change Token Image</button>")
-		body.append(changeImageMenuButton)
-		changeImageMenuButton.off().on("click", function() {
-			close_token_context_menu();
-			id = tokens[0].options.id;
-			if (!(id in window.TOKEN_OBJECTS)) {
-				return;
-			}
-			let tok = window.TOKEN_OBJECTS[id];
-			display_change_image_modal(tok);
-		});
+
+		if(!(tokens.length == 1 && tokens[0].isAoe())){
+			
+			let changeImageMenuButton = $("<button id='changeTokenImage' class='material-icons'>Change Token Image</button>")
+			body.append(changeImageMenuButton)
+			changeImageMenuButton.off().on("click", function() {
+				close_token_context_menu();
+				id = tokens[0].options.id;
+				if (!(id in window.TOKEN_OBJECTS)) {
+					return;
+				}
+				let tok = window.TOKEN_OBJECTS[id];
+				display_change_image_modal(tok);
+			});
+		}
 	}
 
 
@@ -1748,16 +1749,7 @@ function token_context_menu_expanded(tokenIds, e, crossScenePortalData) {
 		}
 	}
 
-/*	if(window.DM) {
-		let optionsRow = $(`<div class="token-image-modal-footer-select-wrapper flyout-from-menu-item"><div class="token-image-modal-footer-title">Token Options</div></div>`);
-		optionsRow.hover(function (hoverEvent) {
-			context_menu_flyout("options-flyout", hoverEvent, function(flyout) {
-				flyout.append(build_options_flyout_menu(tokenIds));
-				update_token_base_visibility(flyout);
-			});
-		});
-		body.append(optionsRow);
-	}*/
+
 	let adjustmentsRow = $(`<div class="token-image-modal-footer-select-wrapper flyout-from-menu-item token-settings"><div class="token-image-modal-footer-title">Token Settings</div></div>`);
 	adjustmentsRow.hover(function (hoverEvent) {
 		context_menu_flyout("adjustments-flyout", hoverEvent, function(flyout) {

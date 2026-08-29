@@ -17,6 +17,7 @@ document.addEventListener('keydown', (e) => {
     e.stopImmediatePropagation();
   }
 }, true);
+document.addEventListener('keydown', pcTemplateTabKey);
 Mousetrap.bind('c', function () {       //combat tracker
     $('#combat_button').click()
 });
@@ -112,7 +113,7 @@ Mousetrap.bind('shift+v', function () {
 
 Mousetrap.bind('=', function () {       //zoom plus
     if($('.roll-mod-container').hasClass('show')){
-        $('.roll-button-mod.plus').click();
+        $('.roll-button-mod.plus').trigger('pointerdown');;
     }
     else if(window.numpadRollFormula != undefined){
         if(window.numpadRollFormulaMod == undefined)
@@ -176,7 +177,7 @@ Mousetrap.bind('h', function () {       //zoom plus
 }); 
 Mousetrap.bind('+', function () {       //zoom plus
     if($('.roll-mod-container').hasClass('show')){
-        $('.roll-button-mod.plus').click();
+        $('.roll-button-mod.plus').trigger('pointerdown');
     }
     else if(window.numpadRollFormula != undefined){
         if(window.numpadRollFormulaMod == undefined)
@@ -191,7 +192,7 @@ Mousetrap.bind('+', function () {       //zoom plus
 
 Mousetrap.bind('-', function () {       //zoom minus
     if($('.roll-mod-container').hasClass('show')){
-        $('.roll-button-mod.minus').click();
+        $('.roll-button-mod.minus').trigger('pointerdown');
     }
     else if(window.numpadRollFormula != undefined){
         if(window.numpadRollFormulaMod == undefined)
@@ -205,7 +206,13 @@ Mousetrap.bind('-', function () {       //zoom minus
 });
 Mousetrap.bind('enter', function () {       //zoom minus
     if($('.roll-mod-container').hasClass('show')){
-        $('.roll-mod-container>.roll-button').click(); 
+        const pointerEvent = new MouseEvent('pointerdown', {
+            bubbles: true,
+            cancelable: true,
+            clientX: 0,
+            clientY: 0
+        });
+        $('#sendRoll')[0].dispatchEvent(pointerEvent);
     }   
     else if(window.numpadRollFormula != undefined){
         if(window.numpadRollFormulaMod == undefined)
@@ -457,7 +464,7 @@ Mousetrap.bind('right', function (e) {
 }, 'keyup');
 
 Mousetrap.bind('alt', function () {
-    if (altHeld) 
+    if (altHeld || window.DRAGGING) 
         return;
     
     altHeld = true;
@@ -996,4 +1003,78 @@ async function avttHandleFilePickerPaste(e) {
         }
     }
     return false;
+}
+
+
+function pcTemplateFocusTarget(sheetEl) {
+    const targets = [];
+    sheetEl.querySelectorAll('td, th, [contenteditable]:not(a)').forEach((el) => {
+        if (el.classList.contains('table-row-drag-handle') || el.classList.contains('header-spacer') || el.classList.contains('add-table-row')) {
+            return;
+        }
+        if (el.offsetParent === null) {
+            return; 
+        }
+        if (!el.isContentEditable) {
+            return;
+        }
+        if (el.matches('td, th')) {
+            targets.push(el);
+        } else {
+            if (el.closest('td, th')) {
+                return; 
+            }
+            targets.push(el);
+        }
+    });
+    return targets;
+}
+
+function placeCaretAtStart(el) {
+    if (typeof el.focus === 'function') {
+        el.focus();
+    }
+    const ownerDocument = el.ownerDocument || document;
+    const ownerWindow = ownerDocument.defaultView || window;
+    const range = ownerDocument.createRange();
+    range.setStart(el, 0);
+    range.collapse(true);
+    const selection = ownerWindow.getSelection();
+    selection.removeAllRanges();
+    selection.addRange(range);
+}
+
+function pcTemplateTabKey(e) {
+    if (e.key !== 'Tab') {
+        return;
+    }
+    const ownerDocument = e.target?.ownerDocument || document;
+    const ownerWindow = ownerDocument.defaultView || window;
+    const selection = ownerWindow.getSelection();
+    if (!selection || selection.rangeCount === 0) {
+        return;
+    }
+    let anchorEl = selection.anchorNode;
+    if (anchorEl && anchorEl.nodeType === Node.TEXT_NODE) {
+        anchorEl = anchorEl.parentElement;
+    }
+    if (!anchorEl) {
+        return;
+    }
+    const sheet = anchorEl.closest('.dnd-sheet');
+    if (!sheet) {
+        return; // not inside a stat sheet, let default Tab behavior happen
+    }
+    const current = anchorEl.closest('td, th') || anchorEl.closest('[contenteditable]:not(a)');
+    if (!current) {
+        return;
+    }
+    const targets = pcTemplateFocusTarget(sheet);
+    const currentIndex = targets.indexOf(current);
+    if (currentIndex === -1) {
+        return;
+    }
+    const nextIndex = (currentIndex + (e.shiftKey ? -1 : 1) + targets.length) % targets.length;
+    e.preventDefault();
+    placeCaretAtStart(targets[nextIndex]);
 }

@@ -37,9 +37,26 @@ class DDBApi {
           nextRequest();
         }
       }else{ 
-        console.debug(`DDBApi: Request queued. Active requests: ${DDBApi.#activeRequestCount}, Queue length: ${DDBApi.#requestQueue.length}`);
+        noisy_log(3, `DDBApi: Request queued. Active requests: ${DDBApi.#activeRequestCount}, Queue length: ${DDBApi.#requestQueue.length}`);
       }
     });
+  }
+
+  // retries the same url up to maxRetries times with exponential backoff, so callers don't need to duplicate retry logic per-request
+  static async #retryFetch(fn, url, maxRetries = 3, baseDelay = 500) {
+    for (let attempt = 1; attempt <= maxRetries; attempt++) {
+      try {
+        return await fn();
+      } catch (error) {
+        if (attempt < maxRetries) {
+          const delay = Math.min(baseDelay * Math.pow(2, attempt - 1), 10000);
+          console.warn(`DDBApi request failed (attempt ${attempt}/${maxRetries}) for url: ${url}, retrying in ${delay}ms`, error);
+          await new Promise(resolve => setTimeout(resolve, delay));
+        } else {
+          console.warn(`DDBApi request failed after ${maxRetries} attempts for url: ${url}. This is likely temporary — please refresh the page. If the issue persists, D&D Beyond may be experiencing outages.`, error);
+        }
+      }
+    }
   }
 
   static async #refreshToken() {
@@ -80,25 +97,29 @@ class DDBApi {
 
 
   static async fetchJsonWithToken(url, extraConfig = {}) {
-    const token = await DDBApi.#refreshToken();
-    const config = {...extraConfig,
-      headers: {
-        'Authorization': `Bearer ${token}`,
+    return await DDBApi.#retryFetch(async () => {
+      const token = await DDBApi.#refreshToken();
+      const config = {...extraConfig,
+        headers: {
+          'Authorization': `Bearer ${token}`,
+        }
       }
-    }
-    const request = await fetch(url, config).then(DDBApi.lookForErrors)
-    return await request.json();
+      const request = await fetch(url, config).then(DDBApi.lookForErrors)
+      return await request.json();
+    }, url);
   }
   static async #fetchLimitedJsonWithToken(url, extraConfig = {}) {
-    const token = await DDBApi.#refreshToken();
-    const config = {...extraConfig,
-      headers: {
-        'Authorization': `Bearer ${token}`,
-      }
-    }
     return await DDBApi.#scheduleRequest(async () => {
-      const request = await fetch(url, config).then(DDBApi.lookForErrors);
-      return request.json();
+      return await DDBApi.#retryFetch(async () => {
+        const token = await DDBApi.#refreshToken();
+        const config = {...extraConfig,
+          headers: {
+            'Authorization': `Bearer ${token}`,
+          }
+        }
+        const request = await fetch(url, config).then(DDBApi.lookForErrors);
+        return request.json();
+      }, url);
     });
   }
   static async fetchItemsJsonWithToken(itemsArray = [], page = 0, pageSize = 1000) {
@@ -252,49 +273,6 @@ class DDBApi {
     return response.data;
   }
 
-  static async deleteAboveVttEncounters(encounters) {
-    noisy_log("DDBApi.deleteAboveVttEncounters starting");
-    // make sure we don't delete the encounter that we're actively on
-    const avttId = is_encounters_page() ? window.location.pathname.split("/").pop() : undefined;
-    const avttEncounters = encounters.filter(e => e.id !== avttId && e.name === DEFAULT_AVTT_ENCOUNTER_DATA.name);
-    console.debug(`DDBApi.deleteAboveVttEncounters avttId: ${avttId}, avttEncounters:`, avttEncounters);
-    const failedEncounters = JSON.parse(localStorage.getItem('avttFailedDelete'));
-    let newFailed = (failedEncounters != null && failedEncounters != undefined && Array.isArray(failedEncounters)) ? failedEncounters : [];
-    for (const encounter of avttEncounters) {
-      if(newFailed.includes(encounter.id))
-        continue;
-      noisy_log("DDBApi.deleteAboveVttEncounters attempting to delete encounter with id:", encounter.id);
-      const response = await DDBApi.deleteWithToken(`https://encounter-service.dndbeyond.com/v1/encounters/${encounter.id}`);
-      noisy_log("DDBApi.deleteAboveVttEncounters delete encounter response:", response.status);
-      if(response.status == 401){
-        newFailed.push(encounter.id)
-        try{
-          localStorage.setItem('avttFailedDelete', JSON.stringify(newFailed));
-        }
-        catch(e){
-          console.warn('localStorage avttFailedDelete Failed', e)
-        }
-      }    
-    }
-    return find_game_id(); // return this here to be used in createAboveVttEncounter - this return being here seems to prevent bugged encounters. Maybe something do with going ahead to create without finishing deleting, not sure but haven't been able to replicate it with it here.
-  }
-
-  static async createAboveVttEncounter(campaignId = find_game_id()) {
-    noisy_log("DDBApi.createAboveVttEncounter", campaignId);
-
-    const campaignInfo = await DDBApi.fetchCampaignInfo(campaignId);
-    noisy_log("DDBApi.createAboveVttEncounter campaignInfo", campaignInfo);
-    if (!campaignInfo.id) {
-      throw new Error(`Invalid campaignInfo ${JSON.stringify(campaignInfo)}`);
-    }
-
-    const url = "https://encounter-service.dndbeyond.com/v1/encounters";
-    const encounterData = {...DEFAULT_AVTT_ENCOUNTER_DATA, campaign: campaignInfo};
-    console.debug("DDBApi.createAboveVttEncounter attempting to create encounter with data", encounterData);
-    const response = await DDBApi.postJsonWithToken(url, encounterData);
-    console.debug("DDBApi.createAboveVttEncounter response", response);
-    return response.data;
-  }
 
   static async fetchCampaignInfo(campaignId) {
     if(!campaignId)
