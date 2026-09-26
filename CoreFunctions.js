@@ -4314,6 +4314,34 @@ const buffsDebuffs = {
       "type": "class",
       "class": "warlock"
   },
+  "Crimson Rite": {
+    "multiOptions": {
+	  "Base": {
+        "tohit": "0",
+        "dmg": "0",
+        "save": "0",
+        "check": "0",
+        "replace": /(\d+d\d+)/gi,
+        "replaceType": {
+          "dmg": '.ddbc-combat-attack--item:has(.ddbc-combat-attack__meta-item:contains("Weapon"))' 
+        },
+        "newRoll": '$1+1d6'
+	  },
+	  "Marked": {
+        "tohit": "0",
+        "dmg": "0",
+        "save": "0",
+        "check": "0",
+        "replace": /(\d+d\d+)/gi,
+        "replaceType": {
+          "dmg": '.ddbc-combat-attack--item:has(.ddbc-combat-attack__meta-item:contains("Weapon"))' 
+        },
+        "newRoll": '$1+2d6',
+	  },
+	},
+    "type": "class",
+    "class": "bloodHunter"
+  },
   "Symbiotic Entity": {
       "tohit": "0",
       "dmg": "+d6",
@@ -5259,6 +5287,7 @@ function build_buff_dropdown(scope = { type: 'character' }, fullBuild = false){
       <ul data-group='sorcerer'><li>Sorcerer</li></ul>
       <ul data-group='warlock'><li>Warlock</li></ul>
       <ul data-group='wizard'><li>Wizard</li></ul>
+      <ul data-group='bloodHunter'><li>Blood Hunter</li></ul>
     </ul>
     <ul data-group='species'><li>Species</li>
       <ul data-group='halfling'><li>Halfling</li></ul>
