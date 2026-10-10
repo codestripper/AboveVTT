@@ -558,7 +558,7 @@ class Token {
 			return {};
 		}
 		const customStatBlock = window.JOURNAL.notes[this.options.statBlock]?.text;
-		const pcURL = customStatBlock != undefined ? $(customStatBlock).find('.custom-pc-sheet.custom-stat').text() : undefined;
+		const pcURL = customStatBlock != undefined ? $(`<div>${customStatBlock}</div>`).find('.custom-pc-sheet.custom-stat').text() : undefined;
 		return {customStatBlock, pcURL};
 	}
 	size(newSize, linewidth=false) {
@@ -1089,7 +1089,7 @@ class Token {
 				const underdarknessDeadCross = underdarknessToken.find('.dead')
 				underdarknessDeadCross.attr("style", `transform:scale(${this.get_token_scale()});--size: ${parseInt(this.options.size) / window.CURRENT_SCENE_DATA.scale_factor / 10}px;`)
 				// check token death
-				if (this.hp > 0) {
+				if (this.baseHp > 0) {
 					underdarknessDeadCross.hide()
 				} else {
 					underdarknessDeadCross.show()
@@ -1098,7 +1098,7 @@ class Token {
 			else{
 				deadCross.attr("style", `transform:scale(${this.get_token_scale()});--size: ${parseInt(this.options.size) / 10}px;`)
 				// check token death
-				if (this.hp > 0) {
+				if (this.baseHp > 0) {
 					deadCross.hide()
 				} else {
 					deadCross.show()
@@ -1326,8 +1326,8 @@ class Token {
 		const tokenHpAuraColor = token_health_aura(this.hpPercentage, this.options.healthauratype);
 		let paddingX = 0;
 		let paddingY = 0;
-		const paddingBaseX = token.is('.example-token') ? window.CURRENT_SCENE_DATA.hpps : 0;
-		const paddingBaseY = token.is('.example-token') ? window.CURRENT_SCENE_DATA.vpps : 0;
+		const paddingBaseX = !token.is('.example-token, [data-id^="exampleToken"]') ? window.CURRENT_SCENE_DATA.hpps : token.width();
+		const paddingBaseY = !token.is('.example-token, [data-id^="exampleToken"]') ? window.CURRENT_SCENE_DATA.vpps : token.height();
 		if(this.options.tokenStyleSelect == "undefined")// I believe this only happens in the sidepanel
 			delete this.options.tokenStyleSelect;
 			
